@@ -8,18 +8,18 @@ export class MenuScene extends Phaser.Scene {
   create() {
     makeTextures(this);
     const { width: W, height: H } = this.scale;
-    sunsetBackdrop(this);
+    const ground = sunsetBackdrop(this);
     audio.music('menu');
     audio.engineStop();
 
-    // the UFO drifting across the sky with Crumb's bread
+    // the UFO drifting across the sky with Crumb's egg
     const ufo = this.add.image(-200, 130, 'ufo');
-    const bread = this.add.image(-200, 190, 'bread').setScale(0.9);
+    const egg = this.add.image(-200, 195, 'egg');
     this.tweens.add({
-      targets: [ufo, bread], x: W + 200, duration: 9000, repeat: -1, repeatDelay: 1500,
+      targets: [ufo, egg], x: W + 200, duration: 9000, repeat: -1, repeatDelay: 1500,
     });
     this.tweens.add({ targets: ufo, y: 115, duration: 900, yoyo: true, repeat: -1, ease: 'Sine.inOut' });
-    this.tweens.add({ targets: bread, y: 175, duration: 900, yoyo: true, repeat: -1, ease: 'Sine.inOut' });
+    this.tweens.add({ targets: egg, y: 180, angle: 10, duration: 900, yoyo: true, repeat: -1, ease: 'Sine.inOut' });
 
     // title
     this.add.text(W / 2 + 4, 150 + 6, 'DUCK DASH', {
@@ -30,19 +30,20 @@ export class MenuScene extends Phaser.Scene {
       stroke: '#3b1d4a', strokeThickness: 10,
     }).setOrigin(0.5);
     this.tweens.add({ targets: title, scale: 1.04, duration: 1200, yoyo: true, repeat: -1, ease: 'Sine.inOut' });
-    this.add.text(W / 2, 228, 'Crumb wants the bread back.', {
+    this.add.text(W / 2, 228, 'Crumb wants the egg back.', {
       fontFamily: FONT, fontSize: '26px', color: '#3b1d4a', fontStyle: 'italic',
     }).setOrigin(0.5);
 
-    // Crumb on the bike, bouncing on the spot
-    const crumb = this.add.container(W * 0.22, H - 180);
+    // Crumb on the bike, bouncing on the spot (wheels touching the grass)
+    const bikeY = ground - 56;
+    const crumb = this.add.container(W * 0.22, bikeY);
     crumb.add([
       this.add.image(-30, 20, 'wheel').setScale(0.95),
       this.add.image(30, 20, 'wheel').setScale(0.95),
       this.add.image(0, 0, 'bike').setOrigin(0.5, 0.6),
     ]);
     crumb.setScale(1.6);
-    this.tweens.add({ targets: crumb, y: H - 188, duration: 300, yoyo: true, repeat: -1, ease: 'Sine.inOut' });
+    this.tweens.add({ targets: crumb, y: bikeY - 6, duration: 300, yoyo: true, repeat: -1, ease: 'Sine.inOut' });
 
     const buttons = [
       makeButton(this, W / 2, 360, 'Play', () => this.scene.start('Cutscene', { id: 'intro', next: 'Level1' })),

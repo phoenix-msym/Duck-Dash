@@ -2,14 +2,32 @@
 // Each makeX() draws shapes onto a Graphics object and saves it as a texture
 // that sprites can use by name, e.g. this.add.image(x, y, 'wheel').
 
+import { wallet } from './wallet.js';
+
 const YELLOW = 0xffd23f;
 const YELLOW_DARK = 0xe8b31e;
 const ORANGE = 0xff8c1a;
-const SCARF = 0xe63950;
+
+// What Crumb is wearing right now (picked in the shop)
+function look() {
+  return { scarf: wallet.equipped('scarf').color, bike: wallet.equipped('bike').colors, hat: wallet.equipped('hat').id };
+}
+
+// Redraw every picture of Crumb, e.g. after buying something in the shop
+export function refreshLook(scene) {
+  ['bike', 'bikeEmpty', 'duckStand', 'duckRunA', 'duckRunB', 'duckJump'].forEach((k) => {
+    if (scene.textures.exists(k)) scene.textures.remove(k);
+  });
+  makeBike(scene);
+  makeDuckStand(scene);
+  makeDuckBack(scene, 'duckRunA', 0);
+  makeDuckBack(scene, 'duckRunB', 1);
+  makeDuckBack(scene, 'duckJump', 2);
+}
 
 export function makeTextures(scene) {
-  if (scene.textures.exists('bike')) return; // only draw once
-  makeBike(scene);
+  if (scene.textures.exists('wheel')) return; // only draw once
+  refreshLook(scene);
   makeWheel(scene);
   makeUfo(scene);
   makeBread(scene);
@@ -20,13 +38,144 @@ export function makeTextures(scene) {
   makeSun(scene);
   makeDot(scene, 'star', 2, 0xffffff);
   makeFeather(scene);
-  makeDuckBack(scene, 'duckRunA', 0);
-  makeDuckBack(scene, 'duckRunB', 1);
-  makeDuckBack(scene, 'duckJump', 2);
   makeGlow(scene);
-  makeDuckStand(scene);
   makePigeon(scene);
+  makeCrumbPickup(scene);
+  makeBoostPad(scene);
   makeEarth(scene);
+  makeEgg(scene);
+  makeDuckling(scene);
+  makePixel(scene);
+  makeStarIcon(scene);
+  makeNest(scene);
+  makeMountains(scene);
+}
+
+// Hats from the shop. cx = middle of the head, top = top of the head, s = size, side = true if seen from the side
+function drawHat(g, kind, cx, top, s, side) {
+  if (kind === 'cap') {
+    g.fillStyle(0x3d6fd6); g.fillEllipse(cx, top + 2 * s, 24 * s, 16 * s);
+    g.fillStyle(0xffffff); g.fillCircle(cx, top - 5 * s, 2 * s);
+    g.fillStyle(0x2a4fa0);
+    if (side) g.fillEllipse(cx + 12 * s, top + 6 * s, 16 * s, 5 * s);   // peak sticking out the front
+    else g.fillRect(cx - 12 * s, top + 6 * s, 24 * s, 3 * s);
+  } else if (kind === 'party') {
+    g.fillStyle(0xff6bd5); g.fillTriangle(cx - 9 * s, top + 5 * s, cx + 9 * s, top + 5 * s, cx, top - 20 * s);
+    g.fillStyle(0xffe14d);
+    g.fillTriangle(cx - 6 * s, top - 2 * s, cx + 6 * s, top - 2 * s, cx, top - 7 * s);
+    g.fillStyle(0xffffff); g.fillCircle(cx, top - 20 * s, 3.5 * s);
+  } else if (kind === 'crown') {
+    g.fillStyle(0xffc400);
+    g.fillRect(cx - 11 * s, top - 2 * s, 22 * s, 8 * s);
+    g.fillTriangle(cx - 11 * s, top - 2 * s, cx - 7 * s, top - 2 * s, cx - 11 * s, top - 13 * s);
+    g.fillTriangle(cx - 4 * s, top - 2 * s, cx + 4 * s, top - 2 * s, cx, top - 15 * s);
+    g.fillTriangle(cx + 7 * s, top - 2 * s, cx + 11 * s, top - 2 * s, cx + 11 * s, top - 13 * s);
+    g.fillStyle(0xe63950); g.fillCircle(cx, top + 2 * s, 2.2 * s);
+    g.fillStyle(0x3d8bff); g.fillCircle(cx - 7 * s, top + 2 * s, 1.8 * s); g.fillCircle(cx + 7 * s, top + 2 * s, 1.8 * s);
+  }
+}
+
+// a golden bread crumb you can collect, with a soft glow
+function makeCrumbPickup(scene) {
+  const g = scene.make.graphics({ add: false });
+  for (let r = 18; r > 8; r -= 2) { g.fillStyle(0xffe680, 0.07); g.fillCircle(20, 20, r); }
+  g.fillStyle(0xb8742a); g.fillRoundedRect(9, 12, 22, 16, 7);
+  g.fillStyle(0xe8a95a); g.fillRoundedRect(10, 11, 20, 13, 6);
+  g.fillStyle(0xfff0c2); g.fillCircle(15, 15, 2.5);
+  g.generateTexture('crumb', 40, 40);
+  g.destroy();
+}
+
+// a glowing boost strip with arrows, sits on the ground in Level 1
+function makeBoostPad(scene) {
+  const g = scene.make.graphics({ add: false });
+  g.fillStyle(0x00e5ff, 0.25); g.fillRoundedRect(0, 0, 140, 22, 10);
+  g.fillStyle(0x1a3a66); g.fillRoundedRect(4, 6, 132, 12, 6);
+  g.fillStyle(0x00e5ff);
+  for (let i = 0; i < 4; i++) {
+    const x = 18 + i * 30;
+    g.fillTriangle(x, 7, x + 14, 12, x, 17);
+  }
+  g.generateTexture('boostPad', 140, 22);
+  g.destroy();
+}
+
+// a tiny white square: the "bits" that fly off when Crumb gets erased
+function makePixel(scene) {
+  const g = scene.make.graphics({ add: false });
+  g.fillStyle(0xffffff); g.fillRect(0, 0, 6, 6);
+  g.generateTexture('pixel', 6, 6);
+  g.destroy();
+}
+
+// a 5-pointed star for the star rating (white, gets tinted gold or grey)
+function makeStarIcon(scene) {
+  const g = scene.make.graphics({ add: false });
+  const pts = [];
+  for (let i = 0; i < 10; i++) {
+    const r = i % 2 ? 22 : 50, a = -Math.PI / 2 + (i * Math.PI) / 5;
+    pts.push({ x: 52 + Math.cos(a) * r, y: 54 + Math.sin(a) * r });
+  }
+  g.fillStyle(0xffffff); g.fillPoints(pts, true);
+  g.generateTexture('starIcon', 104, 104);
+  g.destroy();
+}
+
+// Crumb's egg: cream coloured with little speckles
+function makeEgg(scene) {
+  const g = scene.make.graphics({ add: false });
+  g.fillStyle(0x3b1d4a, 0.25); g.fillEllipse(19, 26, 32, 40);
+  g.fillStyle(0xfff3d6); g.fillEllipse(18, 24, 30, 38);
+  g.fillStyle(0xffffff, 0.8); g.fillEllipse(12, 15, 8, 12); // shine
+  g.fillStyle(0xc9a77a);
+  [[22, 14], [10, 28], [24, 32], [16, 36], [26, 22]].forEach(([x, y]) => g.fillCircle(x, y, 1.6));
+  g.generateTexture('egg', 38, 46);
+  g.destroy();
+}
+
+// the baby duck that hatches at the end
+function makeDuckling(scene) {
+  const g = scene.make.graphics({ add: false });
+  g.fillStyle(0xff8c1a); g.fillEllipse(18, 44, 8, 4); g.fillEllipse(26, 44, 8, 4);
+  g.fillStyle(0xffe680); g.fillEllipse(22, 32, 28, 22);
+  g.fillCircle(30, 16, 10);
+  g.fillTriangle(27, 7, 29, 1, 32, 7); // fluff on top
+  g.fillStyle(0xff8c1a); g.fillEllipse(41, 18, 9, 5);
+  g.fillStyle(0x1a1a1a); g.fillCircle(33, 13, 2);
+  g.fillStyle(0xffffff); g.fillCircle(33.6, 12.4, 0.7);
+  g.fillStyle(0xf5d04a); g.fillEllipse(18, 32, 14, 9); // little wing
+  g.generateTexture('duckling', 48, 48);
+  g.destroy();
+}
+
+function makeNest(scene) {
+  const g = scene.make.graphics({ add: false });
+  g.fillStyle(0x7a4a26); g.fillEllipse(40, 20, 78, 26);
+  g.fillStyle(0x5c3519); g.fillEllipse(40, 14, 60, 12);
+  g.lineStyle(3, 0x9c6a3c);
+  for (let i = 0; i < 7; i++) { g.beginPath(); g.moveTo(6 + i * 11, 22 + (i % 2) * 4); g.lineTo(16 + i * 11, 12 + (i % 2) * 6); g.strokePath(); }
+  g.generateTexture('nest', 80, 34);
+  g.destroy();
+}
+
+// big jagged white mountains (tinted later), repeating sideways
+function makeMountains(scene) {
+  const W = 1280, H = 360;
+  const g = scene.make.graphics({ add: false });
+  const peaks = [0, 300, 120, 340, 60, 260, 150, 330, 40, 280, 110, 0];
+  const pts = [{ x: 0, y: H }];
+  peaks.forEach((h, i) => pts.push({ x: (i / (peaks.length - 1)) * W, y: H - h }));
+  pts.push({ x: W, y: H });
+  g.fillStyle(0xffffff); g.fillPoints(pts, true);
+  // snow caps on the tall ones
+  g.fillStyle(0xffffff, 0.55);
+  peaks.forEach((h, i) => {
+    if (h < 250) return;
+    const x = (i / (peaks.length - 1)) * W, y = H - h;
+    g.fillTriangle(x, y - 2, x - 34, y + 46, x + 34, y + 46);
+  });
+  g.generateTexture('mountains', W, H);
+  g.destroy();
 }
 
 // Crumb standing, side view, facing right (for cutscenes). Feet at the bottom middle.

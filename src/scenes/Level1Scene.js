@@ -3,16 +3,20 @@ import { createControls } from '../controls.js';
 import { settings } from '../settings.js';
 import { gyro } from '../gyro.js';
 import { buildLevel1, groundYAt } from '../level1Track.js';
-import { makeButton, keyboardMenu, FONT } from '../ui.js';
+import { FONT, eraseSprites, unerase, levelCompletePanel } from '../ui.js';
 import { audio } from '../audio.js';
+import { addPauseButton } from './PauseScene.js';
 
 // ---- Bike tuning (change these to make the bike feel different) ----
-const MAX_WHEEL_SPIN = 0.8;   // top speed
-const WHEEL_ACCEL = 0.035;    // how fast it speeds up
+const MAX_WHEEL_SPIN = 1.3;   // top speed
+const WHEEL_ACCEL = 0.06;     // how fast it speeds up
+const HILL_PUSH = 0.0006;     // extra push along the bike while a wheel is on the ground (stops it bogging down on hills)
+const AIR_DRAG = 0.0015;      // low air drag = Crumb keeps his momentum (the default is 0.01)
+const STAR_LIMITS = [32, 48]; // seconds: under the first = 3 stars, under the second = 2 stars
 const BRAKE_SPIN = -0.25;     // S makes it slow down / roll back a bit
-const LEAN_AIR = 0.011;       // how hard A/D spin you in the air
+const LEAN_AIR = 0.04;        // how hard A/D spin you in the air (big = easy flips)
 const LEAN_GROUND = 0.006;    // ...and on the ground (weaker)
-const MAX_LEAN_SPEED = 0.14;
+const MAX_LEAN_SPEED = 0.38;  // fastest spin: a full flip in about a third of a second
 
 // Sky colours for each area of the level: pink sunset that gets darker on the way to space.
 // top = top of the screen, bottom = horizon. stars = how visible the stars are (0 to 1).
@@ -67,7 +71,7 @@ export class Level1Scene extends Phaser.Scene {
     this.matter.world.on('collisionend', (e) => this.onCollision(e, false));
 
     this.input.keyboard.on('keydown-R', () => { if (!this.finished) this.respawn(); });
-    this.input.keyboard.on('keydown-ESC', () => this.scene.start('Menu'));
+    addPauseButton(this, true); // P / Esc / the II button
     if (settings.controlMode === 'gyro' && !gyro.ready()) {
       this.time.delayedCall(600, () => this.showToast('Connect the HW-123 in Settings'));
     }
@@ -88,9 +92,9 @@ export class Level1Scene extends Phaser.Scene {
     this.hillsFar = this.add.tileSprite(W / 2, H - 130, W, 260, 'hillsFar').setScrollFactor(0).setDepth(-97);
     this.hillsNear = this.add.tileSprite(W / 2, H - 70, W, 200, 'hillsNear').setScrollFactor(0).setDepth(-96);
 
-    // the UFO always flying ahead of Crumb, with the stolen bread
+    // the UFO always flying ahead of Crumb, with the stolen egg (this.bread is the egg picture)
     this.ufo = this.add.image(W - 200, 120, 'ufo').setScrollFactor(0).setDepth(-90);
-    this.bread = this.add.image(W - 200, 180, 'bread').setScrollFactor(0).setDepth(-91);
+    this.bread = this.add.image(W - 200, 180, 'egg').setScrollFactor(0).setDepth(-91);
     this.beam = this.add.graphics().setScrollFactor(0).setDepth(-92);
   }
 
@@ -223,10 +227,11 @@ export class Level1Scene extends Phaser.Scene {
 
     const frame = Bodies.rectangle(x, y, 70, 16, { collisionFilter: { group }, density: 0.002, label: 'frame' });
     const head = Bodies.circle(x + 10, y - 34, 10, { collisionFilter: { group }, isSensor: true, density: 0.0005, label: 'head' });
-    const chassis = Body.create({ parts: [frame, head], collisionFilter: { group }, label: 'chassis' });
+    const chassis = Body.create({ parts: [frame, head], collisionFilter: { group }, label: 'chassis', frictionAir: AIR_DRAG });
 
     const wheelOpts = {
       collisionFilter: { group }, friction: 1, frictionStatic: 10, restitution: 0, density: 0.0015, label: 'wheel',
+      frictionAir: AIR_DRAG,
     };
     const back = Bodies.circle(x - 30, y + 20, 16, wheelOpts);
     const front = Bodies.circle(x + 30, y + 20, 16, wheelOpts);
@@ -241,6 +246,7 @@ export class Level1Scene extends Phaser.Scene {
     this.bike = { chassis, frame, head, back, front, all };
     this.crashed = false;
     this.stuckCheck = null;
+    unerase([this.bikeImg, this.backWheelImg, this.frontWheelImg]);
     this.syncSprites();
   }
 
@@ -278,7 +284,8 @@ export class Level1Scene extends Phaser.Scene {
       fontFamily: FONT, fontSize: '48px', fontStyle: 'bold', color: '#ffe066', stroke: '#3b1d4a', strokeThickness: 8,
     }).setOrigin(0.5).setDepth(30);
     this.tweens.add({ targets: bonk, y: p.y - 110, alpha: 0, duration: 900, onComplete: () => bonk.destroy() });
-    this.time.delayedCall(900, () => this.respawn());
+    eraseSprites(this, [this.bikeImg, this.backWheelImg, this.frontWheelImg], { duration: 650 });
+    this.time.delayedCall(1000, () => this.respawn());
   }
 
   respawn() {
@@ -291,7 +298,7 @@ export class Level1Scene extends Phaser.Scene {
     const style = { fontFamily: FONT, fontSize: '22px', color: '#fff4dc', stroke: '#3b1d4a', strokeThickness: 5 };
     this.cpText = this.add.text(20, 16, '', style).setScrollFactor(0).setDepth(50);
     this.timeText = this.add.text(20, 46, '', style).setScrollFactor(0).setDepth(50);
-    this.add.text(W - 20, 16, 'R = back to checkpoint   Esc = menu', { ...style, fontSize: '18px' })
+    this.add.text(W - 20, 16, 'R = back to checkpoint   P / Esc = pause', { ...style, fontSize: '18px' })
       .setOrigin(1, 0).setScrollFactor(0).setDepth(50);
     // progress bar: Crumb vs the finish
     this.progress = this.add.graphics().setScrollFactor(0).setDepth(50);
@@ -363,14 +370,33 @@ export class Level1Scene extends Phaser.Scene {
         const av = Phaser.Math.Clamp(chassis.angularVelocity + lean * power, -MAX_LEAN_SPEED, MAX_LEAN_SPEED);
         Body.setAngularVelocity(chassis, av);
       }
+      // a push along the direction the bike points, so it powers up hills instead of bogging down
+      if (c.forward > 0 && this.wheelsTouching.size > 0) {
+        const f = HILL_PUSH * chassis.mass * c.forward;
+        Body.applyForce(chassis, chassis.position, { x: Math.cos(chassis.angle) * f, y: Math.sin(chassis.angle) * f });
+      }
     }
 
     // engine hum follows wheel speed; a thud when you land after a jump
     audio.engine(this.crashed ? 0 : Phaser.Math.Clamp(Math.abs(back.angularVelocity) / MAX_WHEEL_SPIN, 0, 1));
-    if (this.wheelsTouching.size === 0) this.airTime += delta;
-    else {
-      if (this.airTime > 350 && !this.crashed) audio.sfx.land();
+    if (this.wheelsTouching.size === 0) {
+      this.airTime += delta;
+      this.airSpin = (this.airSpin || 0) + chassis.angularVelocity; // how far we've rotated this jump
+    } else {
+      if (this.airTime > 350 && !this.crashed) {
+        audio.sfx.land();
+        // landed a flip? (check a moment later, in case it was a head-first "landing")
+        const flips = Math.floor(Math.abs(this.airSpin || 0) / (Math.PI * 2) + 0.15);
+        if (flips >= 1) {
+          this.time.delayedCall(200, () => {
+            if (this.crashed) return;
+            this.showToast(flips >= 3 ? `${flips}x FLIP!!!` : flips === 2 ? 'DOUBLE FLIP!!' : 'FLIP!');
+            audio.sfx.checkpoint();
+          });
+        }
+      }
       this.airTime = 0;
+      this.airSpin = 0;
     }
 
     // fell into a gap
@@ -378,7 +404,7 @@ export class Level1Scene extends Phaser.Scene {
       this.crashed = true;
       this.showToast('Splat! Try again');
       audio.sfx.fall();
-      this.time.delayedCall(700, () => this.respawn());
+      this.time.delayedCall(800, () => this.respawn());
     }
 
     // stuck? (hasn't moved forward in 4 seconds) -> remind them about R
@@ -404,27 +430,16 @@ export class Level1Scene extends Phaser.Scene {
 
   finish() {
     this.finished = true;
-    const { width: W, height: H } = this.scale;
     audio.engineStop();
     audio.sfx.finish();
     audio.sfx.whoosh();
     // the UFO blasts off toward space
     this.tweens.add({ targets: [this.ufo, this.bread], y: '-=400', x: '+=200', duration: 1600, ease: 'Cubic.in' });
-
-    const secs = this.elapsed / 1000;
-    const panel = this.add.graphics().setScrollFactor(0).setDepth(60);
-    panel.fillStyle(0x2a1440, 0.85); panel.fillRoundedRect(W / 2 - 360, H / 2 - 200, 720, 400, 28);
-    const style = { fontFamily: FONT, color: '#fff4dc', align: 'center' };
-    this.add.text(W / 2, H / 2 - 140, 'Level 1 complete!', { ...style, fontSize: '54px', fontStyle: 'bold' })
-      .setOrigin(0.5).setScrollFactor(0).setDepth(61);
-    this.add.text(W / 2, H / 2 - 65, `Time: ${Math.floor(secs / 60)}:${(secs % 60).toFixed(1).padStart(4, '0')}\nThe UFO is heading for space... Crumb won't give up!`,
-      { ...style, fontSize: '24px' }).setOrigin(0.5).setScrollFactor(0).setDepth(61);
-    const buttons = [
-      makeButton(this, W / 2, H / 2 + 20, 'Next level: Space!', () => this.scene.start('Cutscene', { id: 'middle', next: 'Level2' }), { w: 340, h: 56, size: 26 }),
-      makeButton(this, W / 2, H / 2 + 90, 'Ride again', () => this.scene.restart(), { w: 340, h: 56, size: 26 }),
-      makeButton(this, W / 2, H / 2 + 160, 'Menu', () => this.scene.start('Menu'), { w: 340, h: 56, size: 26 }),
-    ];
-    buttons.forEach((b) => { b.bg.setScrollFactor(0).setDepth(61); b.text.setScrollFactor(0).setDepth(62); b.zone.setScrollFactor(0); });
-    this.time.delayedCall(800, () => keyboardMenu(this, buttons));
+    // show the stars, then go straight into the next cutscene
+    levelCompletePanel(this, {
+      title: 'Level 1 complete!', secs: this.elapsed / 1000, limits: STAR_LIMITS, levelKey: 'level1',
+      line: 'The UFO is heading for space... Crumb won\'t give up!', fixed: true,
+      onDone: () => this.scene.start('Cutscene', { id: 'middle', next: 'Level2' }),
+    });
   }
 }

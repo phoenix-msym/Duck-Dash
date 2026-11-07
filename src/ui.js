@@ -1,6 +1,103 @@
 // Small helpers for buttons and the sunset background used on menu screens.
 import { audio } from './audio.js';
 
+// ------------------------------------------------------------------ "erase" effect when Crumb dies
+// The picture wipes away from the top down, and little yellow bits fly off the wiping edge.
+// sprites: the images to erase (the first one sets where the bits come from).
+export function eraseSprites(scene, sprites, { duration = 650, fixed = false, depth = 30 } = {}) {
+  const main = sprites[0];
+  const bits = scene.add.particles(0, 0, 'pixel', {
+    speed: { min: 60, max: 220 }, angle: { min: 180, max: 360 }, gravityY: -40,
+    lifespan: 700, scale: { start: 1, end: 0 }, alpha: { start: 1, end: 0 },
+    tint: [0xffd23f, 0xfff4dc, 0xff8c1a, 0xe63950], emitting: false,
+  }).setDepth(depth);
+  if (fixed) bits.setScrollFactor(0);
+  const state = { t: 0 };
+  scene.tweens.add({
+    targets: state, t: 1, duration, ease: 'Sine.in',
+    onUpdate: () => {
+      for (const s of sprites) {
+        const fw = s.frame.realWidth, fh = s.frame.realHeight;
+        s.setCrop(0, fh * state.t, fw, fh * (1 - state.t));
+        s.setAlpha(1 - state.t * 0.4);
+      }
+      // where the wiping edge is on screen right now
+      const top = main.y - main.displayHeight * main.originY;
+      const edgeY = top + main.displayHeight * state.t;
+      bits.emitParticleAt(main.x + Phaser.Math.Between(-main.displayWidth / 3, main.displayWidth / 3), edgeY, 3);
+    },
+    onComplete: () => { sprites.forEach((s) => s.setVisible(false)); scene.time.delayedCall(800, () => bits.destroy()); },
+  });
+}
+
+// put sprites back to normal after they were erased
+export function unerase(sprites) {
+  sprites.forEach((s) => { s.setCrop(); s.setAlpha(1); s.setVisible(true); });
+}
+
+// ------------------------------------------------------------------ star rating
+// Faster time = more stars. limits = [seconds for 3 stars, seconds for 2 stars].
+export function starsForTime(secs, limits) {
+  return secs <= limits[0] ? 3 : secs <= limits[1] ? 2 : 1;
+}
+
+// Saves your best stars/time for a level in the browser and tells you if this run beat it.
+export function saveBest(levelKey, stars, secs) {
+  let best = null;
+  try { best = JSON.parse(localStorage.getItem('duckdash-best-' + levelKey) || 'null'); } catch (e) { /* ignore */ }
+  const better = !best || secs < best.secs;
+  if (better) {
+    try { localStorage.setItem('duckdash-best-' + levelKey, JSON.stringify({ stars, secs })); } catch (e) { /* ignore */ }
+  }
+  return { best: better ? { stars, secs } : best, newRecord: better && best !== null };
+}
+
+export const fmtTime = (secs) => `${Math.floor(secs / 60)}:${(secs % 60).toFixed(1).padStart(4, '0')}`;
+
+// The end-of-level panel: title, time, stars popping in one by one, then it moves on by itself.
+// Space / Enter / click skips the wait. onDone runs when it's time to go to the next scene.
+export function levelCompletePanel(scene, { title, secs, limits, levelKey, line, onDone, fixed = false, wait = 4200 }) {
+  const { width: W, height: H } = scene.scale;
+  const stars = starsForTime(secs, limits);
+  const { best, newRecord } = saveBest(levelKey, stars, secs);
+  const items = [];
+  const add = (o) => { if (fixed) o.setScrollFactor(0); items.push(o); return o; };
+
+  const panel = add(scene.add.graphics().setDepth(60));
+  panel.fillStyle(0x1a1035, 0.9); panel.fillRoundedRect(W / 2 - 380, H / 2 - 220, 760, 440, 28);
+  panel.lineStyle(4, 0xfff4dc, 0.9); panel.strokeRoundedRect(W / 2 - 380, H / 2 - 220, 760, 440, 28);
+  const style = { fontFamily: FONT, color: '#fff4dc', align: 'center' };
+  add(scene.add.text(W / 2, H / 2 - 170, title, { ...style, fontSize: '52px', fontStyle: 'bold' }).setOrigin(0.5).setDepth(61));
+
+  for (let i = 0; i < 3; i++) {
+    const s = add(scene.add.image(W / 2 + (i - 1) * 120, H / 2 - 50, 'starIcon').setDepth(61).setTint(0x4a3a66).setScale(0.9));
+    if (i < stars) {
+      scene.time.delayedCall(500 + i * 350, () => {
+        s.setTint(0xffd23f).setScale(0.3);
+        scene.tweens.add({ targets: s, scale: 1, duration: 350, ease: 'Back.out' });
+        audio.sfx.checkpoint();
+      });
+    }
+  }
+  add(scene.add.text(W / 2, H / 2 + 50,
+    `Time: ${fmtTime(secs)}${newRecord ? '   NEW BEST!' : ''}\n3 stars: under ${fmtTime(limits[0])}   ·   best: ${fmtTime(best.secs)}`,
+    { ...style, fontSize: '24px' }).setOrigin(0.5).setDepth(61));
+  add(scene.add.text(W / 2, H / 2 + 125, line, { ...style, fontSize: '24px', color: '#ffd23f', fontStyle: 'italic' }).setOrigin(0.5).setDepth(61));
+  const hint = add(scene.add.text(W / 2, H / 2 + 180, 'Space = continue', { ...style, fontSize: '18px' }).setOrigin(0.5).setDepth(61).setAlpha(0.7));
+  scene.tweens.add({ targets: hint, alpha: 0.3, duration: 500, yoyo: true, repeat: -1 });
+
+  let gone = false;
+  const go = () => { if (gone) return; gone = true; onDone(); };
+  scene.time.delayedCall(wait, go);
+  // let the stars pop in before Space can skip
+  scene.time.delayedCall(1200, () => {
+    scene.input.keyboard.once('keydown-SPACE', go);
+    scene.input.keyboard.once('keydown-ENTER', go);
+    scene.input.once('pointerdown', go);
+  });
+  return stars;
+}
+
 export const FONT = '"Trebuchet MS", "Segoe UI", sans-serif';
 
 // A rounded button you can click. Returns an object so menus can highlight it with the keyboard.
@@ -57,13 +154,26 @@ export function sunsetBackdrop(scene) {
   const g = scene.add.graphics();
   g.fillGradientStyle(0xff6fa8, 0xff6fa8, 0xffc78f, 0xffc78f, 1);
   g.fillRect(0, 0, W, H);
-  scene.add.image(W * 0.72, H * 0.62, 'sun').setScale(1.6);
-  scene.add.image(W / 2, H - 130, 'hillsFar').setDisplaySize(W, 260).setTint(0xc2548f);
-  scene.add.image(W / 2, H - 70, 'hillsNear').setDisplaySize(W, 200).setTint(0x7e2f6f);
-  // pond with a lily pad, because of course
-  g.fillStyle(0x3f2a6b, 1); // drawn on top below
-  const pond = scene.add.graphics();
-  pond.fillStyle(0x5a8fd6); pond.fillEllipse(220, H - 40, 300, 60);
-  pond.fillStyle(0x4cc26a); pond.fillEllipse(250, H - 44, 70, 22);
-  pond.fillStyle(0x5a8fd6); pond.fillTriangle(250, H - 44, 285, H - 52, 285, H - 38);
+  const ground = H - 110; // y of the grass line: characters stand on this
+
+  scene.add.image(W * 0.72, ground - 150, 'sun').setScale(1.6);
+  // big mountains far away, then rolling hills, then the ground
+  scene.add.image(W / 2, ground + 20, 'mountains').setOrigin(0.5, 1).setTint(0xb04a8a).setAlpha(0.9);
+  scene.add.image(W / 2, ground + 10, 'hillsFar').setOrigin(0.5, 1).setDisplaySize(W, 200).setTint(0x8e3a78);
+
+  const land = scene.add.graphics();
+  land.fillStyle(0x5b3550); land.fillRect(0, ground, W, H - ground);
+  land.fillStyle(0x4fbf6a); land.fillRect(0, ground - 6, W, 14);
+  land.fillStyle(0x8fe39c); land.fillRect(0, ground - 6, W, 4);
+  // little grass tufts and pebbles
+  for (let x = 30; x < W; x += 90) {
+    land.fillStyle(0x4fbf6a); land.fillTriangle(x, ground - 4, x + 6, ground - 16, x + 10, ground - 4);
+    land.fillStyle(0x6e4563); land.fillEllipse(x + 40, ground + 40 + (x % 3) * 12, 18, 8);
+  }
+  // pond with a lily pad, sitting IN the ground
+  land.fillStyle(0x3d6fb8); land.fillEllipse(200, ground + 34, 320, 56);
+  land.fillStyle(0x5a8fd6); land.fillEllipse(200, ground + 30, 300, 46);
+  land.fillStyle(0x4cc26a); land.fillEllipse(240, ground + 28, 70, 20);
+  land.fillStyle(0x5a8fd6); land.fillTriangle(240, ground + 28, 275, ground + 20, 275, ground + 34);
+  return ground;
 }

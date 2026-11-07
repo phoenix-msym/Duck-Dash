@@ -91,13 +91,16 @@ function noise({ start, dur = 0.2, vol = 0.3, type = 'highpass', freq = 1000, fr
 }
 
 // ------------------------------------------------------------------ drums (for the music)
+// Each song plays into its own volume knob (songBus), so switching songs can fade the old one out fast.
+let songBus = null;
+
 const drums = {
-  kick(t) { tone({ freq: 150, slideTo: 40, type: 'sine', start: t, dur: 0.22, vol: 0.9, bus: musicBus }); },
+  kick(t) { tone({ freq: 150, slideTo: 40, type: 'sine', start: t, dur: 0.22, vol: 0.9, bus: songBus }); },
   snare(t) {
-    noise({ start: t, dur: 0.16, vol: 0.45, type: 'bandpass', freq: 1800, q: 0.7, bus: musicBus });
-    tone({ freq: 220, slideTo: 140, type: 'triangle', start: t, dur: 0.1, vol: 0.25, bus: musicBus });
+    noise({ start: t, dur: 0.16, vol: 0.45, type: 'bandpass', freq: 1800, q: 0.7, bus: songBus });
+    tone({ freq: 220, slideTo: 140, type: 'triangle', start: t, dur: 0.1, vol: 0.25, bus: songBus });
   },
-  hat(t) { noise({ start: t, dur: 0.04, vol: 0.18, type: 'highpass', freq: 8000, bus: musicBus }); },
+  hat(t) { noise({ start: t, dur: 0.04, vol: 0.18, type: 'highpass', freq: 8000, bus: songBus }); },
 };
 
 // ------------------------------------------------------------------ the songs
@@ -186,9 +189,9 @@ function scheduleStep(song, s, t) {
     const chord = song.chords[bar % song.chords.length];
     chord.forEach((n) => {
       tone({ freq: midiToHz(noteToMidi(n)), type: 'sawtooth', start: t, dur: sixteenth * 16, vol: 0.05,
-        attack: 0.3, release: 0.6, bus: musicBus, filter: { freq: 900 }, detune: -6 });
+        attack: 0.3, release: 0.6, bus: songBus, filter: { freq: 900 }, detune: -6 });
       tone({ freq: midiToHz(noteToMidi(n)), type: 'sawtooth', start: t, dur: sixteenth * 16, vol: 0.05,
-        attack: 0.3, release: 0.6, bus: musicBus, filter: { freq: 900 }, detune: 6 });
+        attack: 0.3, release: 0.6, bus: songBus, filter: { freq: 900 }, detune: 6 });
     });
   }
   const leadStep = s % song.leadEv.steps;
@@ -196,13 +199,13 @@ function scheduleStep(song, s, t) {
     if (e.step === leadStep) {
       const ls = song.leadSound;
       tone({ freq: midiToHz(e.midi), type: ls.type, start: t, dur: e.len * sixteenth * 0.95, vol: ls.vol,
-        release: ls.release || 0.06, bus: musicBus, filter: ls.filter });
+        release: ls.release || 0.06, bus: songBus, filter: ls.filter });
     }
   }
   const bassStep = s % song.bassEv.steps;
   for (const e of song.bassEv.events) {
     if (e.step === bassStep) {
-      tone({ freq: midiToHz(e.midi), type: 'triangle', start: t, dur: e.len * sixteenth * 0.9, vol: 0.35, bus: musicBus });
+      tone({ freq: midiToHz(e.midi), type: 'triangle', start: t, dur: e.len * sixteenth * 0.9, vol: 0.35, bus: songBus });
     }
   }
 }
@@ -227,11 +230,20 @@ export const audio = {
     if (name === current) return;
     current = name;
     clearInterval(timer);
+    // quickly fade out whatever was playing (including notes that were already scheduled)
+    if (songBus && ctx) {
+      const old = songBus;
+      old.gain.setTargetAtTime(0, ctx.currentTime, 0.05);
+      setTimeout(() => old.disconnect(), 400);
+      songBus = null;
+    }
     if (!name) return;
     const start = () => {
       if (!ensure()) return;
+      songBus = ctx.createGain();
+      songBus.connect(musicBus);
       step = 0;
-      nextStepTime = ctx.currentTime + 0.05;
+      nextStepTime = ctx.currentTime + 0.02;
       clearInterval(timer);
       timer = setInterval(tick, 25);
     };
@@ -319,6 +331,7 @@ export const audio = {
       const voices = {
         Crumb: { f: 620, type: 'square' },
         Pigeon: { f: 300, type: 'triangle' },
+        Duckling: { f: 1100, type: 'sine' },
         '???': { f: 200, type: 'sawtooth' },
       };
       const v = voices[who] || { f: 480, type: 'sine' };

@@ -82,67 +82,49 @@ export function groundYAt(track, x) {
 export function buildLevel1() {
   const t = makeTrackBuilder(-600, 560);
 
+  // A short course (built for a quick demo) with BIG jumps for tricks.
+  // "kicker" = steep ramp, then a gap, then a long downhill landing so big air feels smooth.
+
   // ---------- Area 0: tutorial, pink sunset ----------
   t.flat(600).checkpoint()
     .sign('Hold W to ride!', 180)
-    .flat(700)
-    .sign('S = brake', 0)
-    .hills(2, 40, 400)
-    .sign('A / D = lean back / forward', 60)
-    .flat(400)
-    .sign('Lean back (A) to pop a wheelie!', 0)
     .flat(500)
-    .sign('Ramp ahead! Hold W, then lean in the air', 0)
-    .flat(200)
-    .ramp(220, -60).gap(170, 60)
-    .flat(300)
-    .sign('Land on your WHEELS. Don\'t bonk your head!', 0)
-    .flat(500)
-    .sign('Flags are checkpoints. R = go back to one', 100)
+    .sign('A / D = lean back / forward.  S = brake', 0)
+    .hills(1, 110, 600)
+    .flat(250)
+    .sign('Ramp! In the air, hold A or D to SPIN', 0)
+    .flat(350)
+    .ramp(260, -110).gap(260, 160)
+    .slope(500, 120).flat(250)
+    .sign('Land on your WHEELS. Flags are checkpoints!', 0)
+    .flat(450);
+
+  // ---------- Area 1: big hills and a big kicker ----------
+  t.checkpoint().flat(250)
+    .hills(1, 240, 900)
+    .flat(150)
+    .ramp(320, -190).gap(380, 320)
+    .slope(700, 220).flat(200)
+    .hills(2, 150, 560)
     .flat(300);
 
-  // ---------- Area 1: rolling hills ----------
-  t.checkpoint().flat(300)
-    .hills(2, 90, 600)
-    .flat(200)
-    .ramp(280, -90).gap(200, 150)
-    .slope(300, 60).flat(200)
-    .hills(5, 45, 180)
-    .flat(200)
-    .slope(600, -220).flat(250)
-    .slope(500, 220).flat(400);
+  // ---------- Area 2: dusk, huge drops ----------
+  t.checkpoint().flat(250)
+    .slope(500, -260)
+    .ramp(240, -120).gap(420, 480)
+    .slope(800, 260).flat(150)
+    .ramp(260, -110).gap(300, 60)
+    .hills(1, 320, 1000)
+    .flat(300);
 
-  // ---------- Area 2: dusk, bumpy ----------
-  t.checkpoint().flat(300)
-    .hills(6, 30, 200)
-    .flat(250)
-    .ramp(300, -120).gap(210, 130)
-    .slope(400, 120).flat(200)
-    .hills(2, 160, 650)
-    .flat(300)
-    .ramp(240, -70).gap(180, 0)
-    .ramp(240, -70).gap(200, 120)
-    .flat(400);
-
-  // ---------- Area 3: getting dark, staircase up toward the sky ----------
-  t.checkpoint().flat(300);
-  for (let i = 0; i < 5; i++) t.slope(140, -60).flat(160);
-  t.flat(200)
-    .ramp(320, -110).gap(320, 260)
-    .slope(500, 150).flat(200)
-    .hills(4, 60, 260)
-    .flat(400);
-
-  // ---------- Area 4: almost space! ----------
-  t.checkpoint().flat(300)
-    .slope(900, 300)
-    .flat(150)
-    .ramp(360, -120).gap(270, 100)
-    .slope(400, 80).flat(300)
-    .hills(3, 110, 400)
-    .flat(300)
+  // ---------- Area 3: almost space! the mega jump ----------
+  t.checkpoint().flat(200)
+    .slope(800, 380)
+    .flat(120)
+    .ramp(400, -260).gap(560, 360)
+    .slope(800, 300).flat(200)
     .sign('The UFO is getting away!', 0)
-    .flat(900);
+    .flat(800);
 
   return t.finish();
 }

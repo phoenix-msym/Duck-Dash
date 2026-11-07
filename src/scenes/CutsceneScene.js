@@ -26,8 +26,14 @@ export class CutsceneScene extends Phaser.Scene {
   create() {
     makeTextures(this);
     this.done = false;
+    this.onUpdate = null;
     this.runId = (this.runId || 0) + 1;
-    this.layer = this.add.container(0, 0);   // everything in the "world"
+    // Two cameras: the main one shows the world (and can zoom in), the UI one shows the speech box,
+    // title cards and flashes at normal size, so zooming never makes the text huge.
+    const { width: W0, height: H0 } = this.scale;
+    this.uiObjects = new Set();
+    this.uiCam = this.cameras.add(0, 0, W0, H0);
+    this.events.on('postupdate', () => this.sortCameras());
     this.makeDialogueBox();
 
     const advance = () => { if (this.onAdvance) this.onAdvance(); };
@@ -37,11 +43,12 @@ export class CutsceneScene extends Phaser.Scene {
     this.input.keyboard.on('keydown-ESC', () => this.finish());
 
     const { width: W, height: H } = this.scale;
-    this.add.text(W - 16, H - 12, 'Space = next   Esc = skip', {
+    this.ui(this.add.text(W - 16, H - 12, 'Space = next   Esc = skip', {
       fontFamily: FONT, fontSize: '16px', color: '#ffffff',
-    }).setOrigin(1, 1).setAlpha(0.6).setDepth(100);
+    }).setOrigin(1, 1).setAlpha(0.6).setDepth(100));
 
     this.cameras.main.fadeIn(500, 0, 0, 0);
+    this.uiCam.fadeIn(500, 0, 0, 0);
     this.events.once('shutdown', () => { this.done = true; this.onAdvance = null; });
     audio.engineStop();
     audio.music(this.cutsceneId === 'ending' ? 'happy' : 'mystery');
@@ -51,8 +58,91 @@ export class CutsceneScene extends Phaser.Scene {
   finish() {
     if (this.done) return;
     this.done = true;
+    this.uiCam.fadeOut(400, 0, 0, 0);
     this.cameras.main.fadeOut(400, 0, 0, 0);
     this.cameras.main.once('camerafadeoutcomplete', () => this.scene.start(this.nextScene));
+  }
+
+  // mark something as UI: drawn by the UI camera only (never zoomed)
+  ui(obj) {
+    this.uiObjects.add(obj);
+    this.cameras.main.ignore(obj);
+    return obj;
+  }
+
+  // every frame: anything new that isn't UI is hidden from the UI camera (so it isn't drawn twice)
+  sortCameras() {
+    for (const obj of this.children.list) {
+      if (!this.uiObjects.has(obj) && !obj.__worldOnly) { this.uiCam.ignore(obj); obj.__worldOnly = true; }
+    }
+  }
+
+  // zoom the world camera in on a spot (the speech box stays normal size)
+  zoomTo(zoom, x, y, ms = 1200) {
+    // (camera moves need the long ease name, e.g. 'Sine.easeInOut')
+    this.cameras.main.pan(x, y, ms, 'Sine.easeInOut');
+    this.cameras.main.zoomTo(zoom, ms, 'Sine.easeInOut');
+    return this.wait(ms);
+  }
+
+  // scripts can set c.onUpdate = (time, delta) => {...} for things that move every frame (scrolling, spinning)
+  update(time, delta) {
+    if (this.onUpdate && !this.done) this.onUpdate(time, delta);
+  }
+
+  // a swirling portal. Grow it with c.move(portal, { scale: 1 }).
+  portal(x, y) {
+    const g = this.add.graphics();
+    const colors = [0x3dffd9, 0xb35cff, 0x5d7dff, 0xff6bd5, 0x1a0633];
+    colors.forEach((col, i) => {
+      const r = 110 - i * 22;
+      g.fillStyle(col, i === colors.length - 1 ? 1 : 0.85);
+      g.fillEllipse(0, 0, r * 2, r * 2.6);
+    });
+    // swirl arms
+    g.lineStyle(5, 0xffffff, 0.5);
+    for (let a = 0; a < 4; a++) {
+      g.beginPath();
+      for (let t = 0; t < 1; t += 0.05) {
+        const ang = a * Math.PI / 2 + t * 4, r = 10 + t * 95;
+        const px = Math.cos(ang) * r, py = Math.sin(ang) * r * 1.3;
+        if (t === 0) g.moveTo(px, py); else g.lineTo(px, py);
+      }
+      g.strokePath();
+    }
+    const p = this.add.container(x, y, [g]).setDepth(6).setScale(0);
+    this.tweens.add({ targets: g, angle: 360, duration: 1400, repeat: -1 });
+    return p;
+  }
+
+  // a big white flash over everything (for scene changes)
+  async flash(inMs = 250, holdMs = 100, outMs = 500, between = null) {
+    const { width: W, height: H } = this.scale;
+    let f = this.ui(this.add.rectangle(W / 2, H / 2, W, H, 0xffffff, 0).setDepth(85));
+    await this.move(f, { fillAlpha: 1 }, inMs);
+    if (between) {
+      between(); // this may clear the whole scene (including the flash), so draw a fresh white one on top
+      f = this.ui(this.add.rectangle(W / 2, H / 2, W, H, 0xffffff, 1).setDepth(85));
+    }
+    await this.wait(holdMs);
+    await this.move(f, { fillAlpha: 0 }, outMs);
+    f.destroy();
+  }
+
+  // dusk version of the menu backdrop: purple sky, mountains, solid ground. Returns the ground y.
+  duskBackdrop() {
+    const { width: W, height: H } = this.scale;
+    const ground = H - 110;
+    const sky = this.add.graphics();
+    sky.fillGradientStyle(0x2a1a5e, 0x2a1a5e, 0xc0607e, 0xc0607e, 1); sky.fillRect(0, 0, W, H);
+    for (let i = 0; i < 70; i++) { sky.fillStyle(0xffffff, Math.random() * 0.7); sky.fillRect(Math.random() * W, Math.random() * H * 0.5, 2, 2); }
+    this.add.image(W / 2, ground + 20, 'mountains').setOrigin(0.5, 1).setTint(0x5a2f6d);
+    this.add.image(W / 2, ground + 10, 'hillsFar').setOrigin(0.5, 1).setDisplaySize(W, 180).setTint(0x3c1c4d);
+    const land = this.add.graphics().setDepth(5);
+    land.fillStyle(0x2e1830); land.fillRect(0, ground, W, H - ground);
+    land.fillStyle(0x3f9a58); land.fillRect(0, ground - 6, W, 14);
+    land.fillStyle(0x6fcf86); land.fillRect(0, ground - 6, W, 4);
+    return ground;
   }
 
   // ---------------------------------------------------------------- helpers used by the scripts
@@ -153,7 +243,7 @@ export class CutsceneScene extends Phaser.Scene {
   // ---------------------------------------------------------------- dialogue
   makeDialogueBox() {
     const { width: W, height: H } = this.scale;
-    this.box = this.add.container(0, 0).setDepth(90).setVisible(false);
+    this.box = this.ui(this.add.container(0, 0).setDepth(90).setVisible(false));
     // the speech box sits at the TOP so it never covers the characters standing on the ground
     const top = 36;
     const bg = this.add.graphics();
@@ -172,7 +262,7 @@ export class CutsceneScene extends Phaser.Scene {
 
   // Shows a line of speech, typed out letter by letter. Resolves when the player presses Space.
   say(name, text) {
-    const colors = { Crumb: '#ffd23f', '???': '#b6ff3b', Pigeon: '#b8bccb', '': '#fff4dc' };
+    const colors = { Crumb: '#ffd23f', '???': '#b6ff3b', Pigeon: '#b8bccb', Duckling: '#ffe680', '': '#fff4dc' };
     this.box.setVisible(true);
     this.nameTag.setText(name).setVisible(!!name).setBackgroundColor(colors[name] || '#ffd23f');
     this.lineText.setText('');
@@ -202,13 +292,13 @@ export class CutsceneScene extends Phaser.Scene {
 
   async title(big, small) {
     const { width: W, height: H } = this.scale;
-    const shade = this.add.rectangle(W / 2, H / 2, W, H, 0x000000, 0).setDepth(95);
-    const t1 = this.add.text(W / 2, H / 2 - 30, big, {
+    const shade = this.ui(this.add.rectangle(W / 2, H / 2, W, H, 0x000000, 0).setDepth(95));
+    const t1 = this.ui(this.add.text(W / 2, H / 2 - 30, big, {
       fontFamily: FONT, fontSize: '72px', fontStyle: 'bold', color: '#fff4dc', stroke: '#3b1d4a', strokeThickness: 10,
-    }).setOrigin(0.5).setDepth(96).setAlpha(0);
-    const t2 = this.add.text(W / 2, H / 2 + 45, small, {
+    }).setOrigin(0.5).setDepth(96).setAlpha(0));
+    const t2 = this.ui(this.add.text(W / 2, H / 2 + 45, small, {
       fontFamily: FONT, fontSize: '34px', color: '#ffd23f', fontStyle: 'italic',
-    }).setOrigin(0.5).setDepth(96).setAlpha(0);
+    }).setOrigin(0.5).setDepth(96).setAlpha(0));
     await this.move(shade, { fillAlpha: 0.75 }, 500);
     await this.move([t1, t2], { alpha: 1 }, 500);
     await this.wait(1800);
@@ -216,55 +306,58 @@ export class CutsceneScene extends Phaser.Scene {
 }
 
 // =====================================================================================
-//  1. OPENING: the bread gets stolen
+//  1. OPENING: Crumb's egg gets stolen
 // =====================================================================================
 async function intro(c) {
-  const { width: W, height: H } = c.scale;
-  sunsetBackdrop(c);
-  const ground = H - 70;
+  const { width: W } = c.scale;
+  const ground = sunsetBackdrop(c); // y of the grass, everyone stands on this
 
-  const parked = c.bike(W - 260, ground - 42, false, 1.5);
-  const crumb = c.character('duckStand', 420, ground, 1.7);
-  const bread = c.img('bread', 520, ground - 92, { depth: 11 });
+  // bike: wheels are 24px below + 30px down from its middle at scale 1.5, so lift it 54px
+  const parked = c.bike(W - 260, ground - 54, false, 1.5);
+  const crumb = c.character('duckStand', 440, ground, 1.7);
+  c.img('nest', 560, ground + 4, { origin: [0.5, 1], depth: 10 });
+  const egg = c.img('egg', 560, ground - 12, { origin: [0.5, 1], depth: 11 });
+  c.tweens.add({ targets: egg, angle: { from: -4, to: 4 }, duration: 700, yoyo: true, repeat: -1, ease: 'Sine.inOut' });
 
   await c.wait(700);
   await c.say('', 'The lily pond. Sunset. A perfect evening.');
-  await c.say('Crumb', 'Ahh... a whole loaf of fresh bread. All mine. Just me and my bread.');
+  await c.say('Crumb', 'My very own egg... any day now it\'s going to hatch. I\'ll keep it nice and safe.');
 
   // the UFO swoops in
   const ufo = c.ufo(W + 200, 80);
   c.cameras.main.shake(400, 0.004);
   audio.sfx.whoosh();
-  await c.move(ufo, { x: 520, y: 170 }, 1400, 'Cubic.out');
+  await c.move(ufo, { x: 560, y: 170 }, 1400, 'Cubic.out');
   c.hover(ufo);
-  c.pop('?', 440, ground - 150);
+  c.pop('?', 460, ground - 160);
   await c.wait(600);
 
-  // tractor beam lifts the bread
-  const beam = c.beam({ x: 520, y: 200 }, { x: 520, y: ground - 70 });
+  // tractor beam lifts the egg out of the nest
+  const beam = c.beam({ x: 560, y: 200 }, { x: 560, y: ground });
   c.tweens.add({ targets: beam, alpha: 0.6, duration: 200, yoyo: true, repeat: -1 });
   audio.sfx.beam();
-  await c.move(bread, { y: 230, angle: 360 }, 1600, 'Sine.in');
-  bread.setVisible(false);
+  c.tweens.killTweensOf(egg);
+  await c.move(egg, { y: 235, angle: 360 }, 1600, 'Sine.in');
+  egg.setVisible(false);
   beam.destroy();
 
-  c.pop('!', 440, ground - 150);
-  await c.say('???', 'Mwahahaha! This bread belongs to ME now!');
+  c.pop('!', 460, ground - 160);
+  await c.say('???', 'Mwahahaha! This egg belongs to ME now!');
   await c.say('???', '...coo.');
   await c.say('Crumb', '"Coo"?');
-  await c.say('Crumb', 'HEY! GIVE THAT BACK!!');
+  await c.say('Crumb', 'HEY! THAT\'S MY EGG! GIVE IT BACK!!');
 
   // UFO escapes
   ufo.bob.stop();
   audio.sfx.whoosh();
   await c.move(ufo, { x: W + 250, y: 60 }, 1100, 'Cubic.in');
 
-  await c.say('Crumb', 'Oh, you did NOT just steal a duck\'s bread.');
+  await c.say('Crumb', 'Nobody steals a duck\'s egg. NOBODY.');
   await c.say('Crumb', 'Good thing I fixed up the old dirt bike...');
 
   // Crumb hops on the bike and rides off
   c.tweens.killTweensOf(crumb);
-  await c.move(crumb, { x: parked.x, y: ground - 30 }, 800, 'Quad.inOut');
+  await c.move(crumb, { x: parked.x, y: ground - 20 }, 800, 'Quad.inOut');
   crumb.setVisible(false);
   parked.body.setTexture('bike');
   parked.spin(true);
@@ -275,90 +368,136 @@ async function intro(c) {
 }
 
 // =====================================================================================
-//  2. MIDDLE: the UFO heads for space, and Crumb follows
+//  2. MIDDLE: the UFO escapes through a portal, Crumb follows, and the chase continues in space
 // =====================================================================================
 async function middle(c) {
   const { width: W, height: H } = c.scale;
-  const ground = H - 90;
+  const ground = c.duskBackdrop();
 
-  // dusk sky
-  const sky = c.add.graphics();
-  sky.fillGradientStyle(0x2a1a5e, 0x2a1a5e, 0xc0607e, 0xc0607e, 1); sky.fillRect(0, 0, W, H);
-  for (let i = 0; i < 60; i++) { sky.fillStyle(0xffffff, Math.random() * 0.7); sky.fillRect(Math.random() * W, Math.random() * H * 0.5, 2, 2); }
-  c.img('hillsFar', W / 2, H - 150).setDisplaySize(W, 260).setTint(0x5a2f6d);
-  // cliff with a ramp at the edge
-  const land = c.add.graphics().setDepth(5);
-  land.fillStyle(0x3c1c4d);
-  land.fillPoints([{ x: 0, y: ground }, { x: 820, y: ground }, { x: 960, y: ground - 70 }, { x: 960, y: H }, { x: 0, y: H }], true);
-  land.lineStyle(10, 0x4fbf6a); land.strokePoints([{ x: 0, y: ground }, { x: 820, y: ground }, { x: 960, y: ground - 70 }]);
+  // a wooden kicker ramp sitting on the ground
+  const rampX = 760;
+  const ramp = c.add.graphics().setDepth(6);
+  ramp.fillStyle(0x8a5a32); ramp.fillTriangle(rampX, ground, rampX + 150, ground, rampX + 150, ground - 80);
+  ramp.fillStyle(0x6b4226); ramp.fillRect(rampX + 140, ground - 80, 10, 80);
 
-  const ufo = c.ufo(1080, 200);
+  const ufo = c.ufo(1040, 210);
   c.hover(ufo);
-  const bread = c.img('bread', 1080, 262, { depth: 8 });
-  const bike = c.bike(-150, ground - 42, true, 1.4);
+  const egg = c.img('egg', 1040, 278, { depth: 8 });
+  c.tweens.add({ targets: egg, y: 268, duration: 900, yoyo: true, repeat: -1, ease: 'Sine.inOut' });
+  const bike = c.bike(-150, ground - 50, true, 1.4); // wheels resting on the grass
   bike.spin(true);
-  await c.move(bike, { x: 300 }, 1400, 'Quad.out');
+  audio.sfx.whoosh();
+  await c.move(bike, { x: 280 }, 1200, 'Quad.out');
   bike.spin(false);
 
   await c.say('???', 'You\'re a persistent little duck, aren\'t you?');
-  await c.say('Crumb', 'You have my bread. I have all evening.');
-  await c.say('???', 'Then let\'s see you follow me... to SPACE! Mwahaha... coo!');
+  await c.say('Crumb', 'You have my egg. I have all evening.');
+  await c.say('???', 'Then try following me through THIS! Mwahaha... coo!');
 
-  // UFO blasts straight up, leaving its beam behind for a moment
+  // the UFO zaps open a portal in the sky...
   ufo.bob.stop();
-  const beam = c.beam({ x: 1080, y: 200 }, { x: 1080, y: ground });
-  c.tweens.add({ targets: beam, alpha: 0.3, duration: 150, yoyo: true, repeat: -1 });
+  const portal = c.portal(1120, 150);
+  const zap = c.add.graphics().setDepth(7);
+  zap.lineStyle(6, 0xb6ff3b, 0.9); zap.lineBetween(ufo.x, ufo.y, 1120, 150);
+  audio.sfx.reveal();
+  await c.move(portal, { scale: 1 }, 700, 'Back.out');
+  zap.destroy();
+  // ...and dives in with the egg
+  c.tweens.killTweensOf(egg);
   audio.sfx.whoosh();
-  c.move(bread, { y: -200 }, 1400, 'Cubic.in');
-  await c.move(ufo, { y: -200 }, 1400, 'Cubic.in');
+  c.move(egg, { x: 1120, y: 150, scale: 0.1, alpha: 0 }, 700, 'Cubic.in');
+  await c.move(ufo, { x: 1120, y: 150, scale: 0.1, alpha: 0, angle: 180 }, 700, 'Cubic.in');
 
-  await c.say('Crumb', 'The beam is still on... Here goes NOTHING!');
+  await c.say('Crumb', 'Oh no you DON\'T!');
 
-  // full speed up the ramp, into the beam
+  // Crumb guns it: up the ramp and into the portal, right behind the UFO
   bike.spin(true);
-  await c.move(bike, { x: 820 }, 900, 'Quad.in');
-  await c.move(bike, { x: 960, y: ground - 112, angle: -25 }, 300, 'Linear');
-  c.cameras.main.shake(300, 0.006);
   audio.sfx.jump();
+  await c.move(bike, { x: rampX + 10 }, 700, 'Quad.in');
+  await c.move(bike, { x: rampX + 150, y: ground - 80 - 50, angle: -28 }, 220, 'Linear');
   audio.sfx.beam();
-  await c.move(bike, { x: 1080, y: -150, angle: -720, scale: 0.6 }, 1600, 'Cubic.in');
-  beam.destroy();
+  await c.move(bike, { x: 1120, y: 150, angle: -360, scale: 0.25 }, 750, 'Sine.out');
+  c.cameras.main.shake(300, 0.01);
 
-  // --- cut to space ---
-  await c.wait(300);
-  c.tweens.killAll();
-  c.children.removeAll(true);
-  c.makeDialogueBox();
-  c.spaceBackdrop();
-  c.img('earth', 200, H + 60, { scale: 1.6, depth: 1 });
+  // --- whoosh through the portal: a white flash, and we're in space ---
+  const roadY = H - 130;
+  let scroll = 0, speed = 0.55; // how fast the world slides past (pixels per ms)
+  let stars = [], road, earth, tube = null;
+  await c.flash(200, 150, 600, () => {
+    c.tweens.killAll();
+    c.children.removeAll(true);
+    c.makeDialogueBox();
+    c.spaceBackdrop();
+    earth = c.img('earth', 260, H + 40, { scale: 1.5, depth: 1 });
+    // fast-moving star streaks so it feels like a chase
+    stars = [];
+    for (let i = 0; i < 90; i++) {
+      stars.push(c.add.rectangle(Math.random() * W, Math.random() * (roadY - 20), Phaser.Math.Between(6, 30), 2, 0xffffff,
+        Phaser.Math.FloatBetween(0.3, 0.9)).setDepth(2));
+    }
+    road = c.add.graphics().setDepth(4);
+  });
 
-  // a giant glowing tunnel floating in space
-  const tunnel = c.add.graphics().setDepth(3);
-  const tx = 860, ty = 330;
-  for (let i = 8; i >= 1; i--) {
-    const s = i * 30;
-    tunnel.fillStyle(i % 2 ? 0x4d6bff : 0x3b52d1, 1);
-    tunnel.fillRect(tx - s, ty - s, s * 2, s * 2);
-  }
-  tunnel.fillStyle(0x050818); tunnel.fillRect(tx - 24, ty - 24, 48, 48);
-  const platform = c.add.graphics().setDepth(4);
-  platform.fillStyle(0x4d6bff); platform.fillRect(380, ty + 240, 720, 24);
+  // a glowing space road that scrolls past, so everyone is always running ON something
+  c.onUpdate = (time, delta) => {
+    scroll += speed * delta;
+    for (const s of stars) { s.x -= speed * delta * (s.width / 12); if (s.x < -40) s.x = W + 40; }
+    earth.x -= speed * delta * 0.02;
+    road.clear();
+    road.fillStyle(0x1d2266); road.fillRect(0, roadY, W, H - roadY);
+    road.fillStyle(0x4d6bff); road.fillRect(0, roadY - 4, W, 8);
+    road.fillStyle(0x7f98ff);
+    for (let x = -(scroll % 120); x < W; x += 120) road.fillRect(x, roadY + 18, 60, 6);
+    if (tube && tube.x > 1000) tube.x = Math.max(1000, tube.x - speed * delta); // the tube stops just ahead
+  };
 
-  const ufo2 = c.ufo(tx, ty - 60, 0.7);
-  await c.move(ufo2, { scale: 0.05, y: ty }, 1200, 'Cubic.in');
-  ufo2.setVisible(false);
-
-  // Crumb tumbles in, the bike floats away
-  const crumb = c.img('duckStand', 300, -80, { origin: [0.5, 1], scale: 1.6, depth: 10 });
-  const floatyBike = c.bike(300, -80, false, 1.2);
-  c.move(floatyBike, { x: -200, y: 120, angle: -260 }, 3000, 'Sine.out');
-  await c.move(crumb, { x: 520, y: ty + 240, angle: 360 }, 1300, 'Bounce.out');
+  // Crumb comes flying out of the portal and lands running; the bike drifts off
+  const backPortal = c.portal(140, 260);
+  backPortal.setScale(0.8);
+  const crumb = c.img('duckStand', 140, 260, { origin: [0.5, 1], scale: 0.3, depth: 10 });
+  const floaty = c.bike(140, 260, false, 0.4);
+  c.move(floaty, { x: -150, y: 80, angle: -300, scale: 1 }, 2200, 'Sine.out');
+  await c.move(crumb, { x: 330, y: roadY, scale: 1.5, angle: 360 }, 700, 'Quad.in');
   crumb.setAngle(0);
   audio.sfx.land();
+  c.move(backPortal, { scale: 0 }, 500);
+  // running: a quick bob up and down
+  c.tweens.add({ targets: crumb, y: roadY - 10, angle: 4, duration: 130, yoyo: true, repeat: -1 });
 
-  await c.say('Crumb', 'Whoa... I\'m in SPACE.');
-  await c.say('Crumb', 'Bye, bike! I\'ll miss you!');
-  await c.say('Crumb', 'And the UFO went into that giant tube. Guess I\'m running from here!');
+  // the UFO zooms ahead, taunting
+  const ufo2 = c.ufo(W + 150, 230, 1.1);
+  const egg2 = c.img('egg', W + 150, 290, { depth: 8 });
+  c.move(egg2, { x: 900 }, 900, 'Cubic.out');
+  await c.move(ufo2, { x: 900 }, 900, 'Cubic.out');
+  c.hover(ufo2);
+  c.tweens.add({ targets: egg2, y: 280, duration: 900, yoyo: true, repeat: -1, ease: 'Sine.inOut' });
+
+  await c.say('???', 'Try and catch me NOW, duck! Mwahahaha!');
+  await c.say('Crumb', 'My bike\'s gone... fine. I\'ll RUN!');
+
+  // a giant tube comes into view on the road. The UFO dives in.
+  tube = c.add.graphics().setDepth(5);
+  for (let i = 6; i >= 1; i--) {
+    const s = i * 26;
+    tube.fillStyle(i % 2 ? 0x4d6bff : 0x3b52d1, 1);
+    tube.fillRect(-s, -s * 2 + 6, s * 2, s * 2);
+  }
+  tube.fillStyle(0x050818); tube.fillRect(-26, -46, 52, 52);
+  tube.x = W + 200; tube.y = roadY;
+  await c.wait(1500);
+  ufo2.bob.stop();
+  c.tweens.killTweensOf(egg2);
+  audio.sfx.whoosh();
+  c.move(egg2, { x: tube.x, y: roadY - 70, scale: 0.1, alpha: 0 }, 600, 'Cubic.in');
+  await c.move(ufo2, { x: tube.x, y: roadY - 80, scale: 0.1, alpha: 0 }, 600, 'Cubic.in');
+  await c.say('Crumb', 'Into the tube? Then I\'m going in too!');
+
+  // Crumb sprints after it and jumps in
+  c.tweens.killTweensOf(crumb);
+  audio.sfx.jump();
+  speed = 0.2;
+  await c.move(crumb, { x: tube.x, y: roadY - 60, scale: 0.2 }, 800, 'Quad.in');
+  crumb.setVisible(false);
 
   await c.title('LEVEL 2', 'The Space Tube');
 }
@@ -371,12 +510,21 @@ async function ending(c) {
   c.spaceBackdrop(0x03140a, 0x14243a);
   const earth = c.img('earth', W - 220, 170, { scale: 0.9, depth: 1 });
 
-  // asteroid to stand on
+  // a big flat asteroid surface to stand on (flat on top, so nobody floats)
+  const ground = H - 110;
   const rock = c.add.graphics().setDepth(5);
-  rock.fillStyle(0x6b6478); rock.fillEllipse(W / 2, H + 120, W * 1.3, 420);
+  rock.fillStyle(0x4a4456); rock.fillRect(0, ground + 8, W, H - ground);
+  rock.fillStyle(0x6b6478); rock.fillRect(0, ground - 4, W, 16);
+  rock.fillStyle(0x8a849a); rock.fillRect(0, ground - 4, W, 4);
+  // craters and pebbles on the surface
+  rock.fillStyle(0x3a3546);
+  [[160, 40, 90, 18], [520, 70, 140, 24], [900, 45, 110, 20], [1180, 80, 70, 14]].forEach(([x, y, w, h]) => rock.fillEllipse(x, ground + y, w, h));
+  rock.fillStyle(0x6b6478);
+  [[250, -8], [700, -6], [1050, -8]].forEach(([x, y]) => rock.fillEllipse(x, ground + y, 22, 12));
+  // the far edge of the asteroid with distant rocks, so it looks like a place
   rock.fillStyle(0x5a5466);
-  [[300, 560, 70, 24], [760, 600, 110, 30], [1050, 570, 60, 20]].forEach(([x, y, w, h]) => rock.fillEllipse(x, y, w, h));
-  const ground = H - 100;
+  rock.fillTriangle(60, ground - 4, 140, ground - 60, 220, ground - 4);
+  rock.fillTriangle(1000, ground - 4, 1090, ground - 80, 1200, ground - 4);
 
   // the UFO sputters in, smoking, and crash-lands
   const ufo = c.img('ufo', -200, 120, { scale: 1.3, depth: 8 });
@@ -384,21 +532,66 @@ async function ending(c) {
     follow: ufo, speed: 30, scale: { start: 0.25, end: 0.6 }, alpha: { start: 0.5, end: 0 },
     tint: 0x555555, lifespan: 1200, frequency: 80,
   }).setDepth(7);
-  await c.move(ufo, { x: 760, y: ground - 40, angle: 18 }, 2200, 'Quad.in');
+  await c.move(ufo, { x: 760, y: ground - 30, angle: 14 }, 2200, 'Quad.in'); // lands with its bottom on the rock
   c.cameras.main.shake(500, 0.012);
   audio.sfx.crash();
-  await c.wait(600);
+  smoke.setFrequency(160); // keeps smoking gently
 
-  // Crumb runs in
+  // WRECKAGE: a scorch mark, and broken pieces of saucer scattered all around it
+  const scorch = c.add.graphics().setDepth(6);
+  scorch.fillStyle(0x221d28, 0.85); scorch.fillEllipse(760, ground + 2, 380, 30);
+  scorch.fillStyle(0x15121a, 0.9); scorch.fillEllipse(760, ground + 2, 200, 16);
+  const pieces = [
+    // [landing x, angle, kind]  kind: 0 = hull panel, 1 = sharp shard, 2 = broken light, 3 = bent antenna, 4 = bolt
+    [560, -25, 0], [610, 40, 2], [650, 120, 4], [690, -60, 1], [845, 70, 1], [890, -15, 0],
+    [930, 200, 3], [975, 30, 2], [1015, -80, 4], [520, 160, 1], [1060, 15, 0], [720, 95, 4],
+  ];
+  const lightColors = [0xff5d73, 0xffe14d, 0x5dffb0, 0x5dc8ff];
+  pieces.forEach(([x, ang, kind], i) => {
+    const p = c.add.graphics().setDepth(9);
+    if (kind === 0) {
+      p.fillStyle(0x8f96a8); p.fillRoundedRect(-22, -9, 44, 18, 4);
+      p.fillStyle(0x6d7486); p.fillRect(-22, 2, 44, 4);
+      p.fillStyle(0x4a5060); p.fillCircle(-14, -3, 2); p.fillCircle(14, -3, 2); // rivets
+    } else if (kind === 1) {
+      p.fillStyle(0xa9b0c2); p.fillTriangle(-16, 6, 14, 8, 2, -14);
+      p.fillStyle(0x6d7486); p.fillTriangle(-6, 6, 14, 8, 4, -2);
+    } else if (kind === 2) {
+      p.fillStyle(0x6d7486); p.fillRect(-8, 0, 16, 6);
+      p.fillStyle(lightColors[i % lightColors.length], 0.9); p.fillCircle(0, -2, 7);
+      p.fillStyle(0xffffff, 0.7); p.fillCircle(-2, -4, 2);
+    } else if (kind === 3) {
+      p.lineStyle(4, 0x8f96a8); p.beginPath(); p.moveTo(-16, 6); p.lineTo(0, -6); p.lineTo(14, 2); p.strokePath();
+      p.fillStyle(0xff5d73); p.fillCircle(14, 2, 5);
+    } else {
+      p.fillStyle(0x5a6070); p.fillRect(-5, -5, 10, 10);
+      p.fillStyle(0x8f96a8); p.fillCircle(0, 0, 3);
+    }
+    // each piece flies out of the crash and lands on the rock
+    p.setPosition(760, ground - 40);
+    const ry = ground - 4 - Phaser.Math.Between(0, 8);
+    c.tweens.add({ targets: p, x, duration: 500 + i * 40, ease: 'Quad.out' });
+    c.tweens.add({ targets: p, y: { from: ground - 40, to: ry }, duration: 500 + i * 40, ease: 'Bounce.out' });
+    c.tweens.add({ targets: p, angle: ang + 360, duration: 500 + i * 40, ease: 'Quad.out' });
+  });
+  // little sparks crackling off the wreck now and then
+  const sparks = c.add.particles(0, 0, 'pixel', {
+    x: { min: 690, max: 830 }, y: ground - 40, speed: { min: 80, max: 200 }, angle: { min: 220, max: 320 },
+    gravityY: 400, lifespan: 500, scale: { start: 0.8, end: 0 }, tint: [0xffe14d, 0xff8c1a, 0xffffff],
+    frequency: 700, quantity: 5,
+  }).setDepth(10);
+  await c.wait(900);
+
+  // Crumb runs in, and the camera moves in closer for the big conversation
   const crumb = c.character('duckStand', -100, ground, 1.7);
   await c.move(crumb, { x: 380 }, 1200, 'Quad.out');
-  await c.say('Crumb', 'End of the line, bread thief!');
+  await c.zoomTo(1.3, 580, 440, 1100);
+  await c.say('Crumb', 'End of the line, egg thief!');
   await c.say('???', 'Ugh... my beautiful saucer...');
   await c.say('Crumb', 'Come out of there. Let\'s see who you REALLY are!');
 
   // the hatch pops open... smoke... a figure steps out
-  smoke.stop();
-  const flash = c.add.rectangle(W / 2, H / 2, W, H, 0xffffff, 0).setDepth(80);
+  const flash = c.ui(c.add.rectangle(W / 2, H / 2, W, H, 0xffffff, 0).setDepth(80));
   const pigeon = c.img('pigeon', 760, ground, { origin: [0.5, 1], scale: 1.7, depth: 9 }).setAlpha(0).setTint(0x000000);
   await c.move(pigeon, { alpha: 1, x: 640 }, 900);
   await c.say('???', '...');
@@ -412,24 +605,61 @@ async function ending(c) {
   await c.say('Crumb', 'A PIGEON?!');
   await c.say('Pigeon', 'Okay, okay. You got me.');
   await c.say('Pigeon', 'Every day, everybody at the pond feeds the ducks. Ducks this, ducks that.');
-  await c.say('Pigeon', 'Nobody ever saves any bread for us pigeons...');
+  await c.say('Pigeon', 'Nobody ever shares any bread with us pigeons...');
+  await c.say('Pigeon', 'So I thought... if I hatched my OWN duck, it would share with me.');
   await c.say('Crumb', '...So you built a whole UFO?');
   await c.say('Pigeon', 'I had a LOT of free time.');
 
-  // the bread comes back
-  const bread = c.img('bread', 600, ground - 60, { depth: 11, scale: 1.2 });
-  await c.move(bread, { x: 460, y: ground - 95 }, 800, 'Quad.out');
-  await c.say('Crumb', 'You know... you could have just asked.');
+  // the egg comes back...
+  const egg = c.img('egg', 600, ground, { origin: [0.5, 1], depth: 11, scale: 1.2 });
+  await c.move(egg, { x: 500 }, 800, 'Quad.out');
+  await c.say('Pigeon', 'Here. Your egg. Sorry, duck.');
 
-  // Crumb tears the bread in half
-  const halfL = c.img('bread', 460, ground - 95, { depth: 11, scale: 0.75 });
-  const halfR = c.img('bread', 460, ground - 95, { depth: 11, scale: 0.75 });
+  // ...and starts to wobble
+  await c.move(egg, { angle: 12 }, 120); await c.move(egg, { angle: -12 }, 120);
+  await c.move(egg, { angle: 12 }, 120); await c.move(egg, { angle: 0 }, 120);
+  c.pop('!', 380, ground - 150);
+  await c.say('Crumb', 'Wait... it\'s moving!');
+  for (let i = 0; i < 3; i++) { await c.move(egg, { angle: 15 }, 80); await c.move(egg, { angle: -15 }, 80); }
+  egg.setAngle(0);
+
+  // CRACK! A duckling pops out
+  audio.sfx.rip();
+  audio.sfx.reveal();
+  c.cameras.main.shake(150, 0.004);
+  const shellL = c.img('egg', 490, ground, { origin: [0.5, 1], depth: 11, scale: 1.2 }).setCrop(0, 0, 19, 46);
+  const shellR = c.img('egg', 510, ground, { origin: [0.5, 1], depth: 11, scale: 1.2 }).setCrop(19, 0, 19, 46);
+  egg.destroy();
+  c.move(shellL, { x: 450, angle: -40, alpha: 0 }, 700);
+  c.move(shellR, { x: 550, angle: 40, alpha: 0 }, 700);
+  const duckling = c.character('duckling', 500, ground, 1.4);
+  await c.move(duckling, { y: ground - 30 }, 180, 'Quad.out');
+  await c.move(duckling, { y: ground }, 180, 'Quad.in');
+  await c.say('Duckling', 'Peep!');
+  await c.say('Crumb', 'My baby!! You hatched!');
+  await c.say('Duckling', 'Peep peep!');
+
+  // Crumb pulls out some bread to share
+  await c.say('Crumb', 'You know, pigeon... you could have just asked. I always have bread.');
+  // Where everyone's beak is (each character stands on the ground, so this is measured from their feet)
+  const crumbBeak = { x: crumb.x + 56, y: ground - 92 };
+  const pigeonBeak = { x: pigeon.x - 58, y: ground - 95 };
+  const babyBeak = { x: duckling.x + 26, y: ground - 40 };
+  // Crumb pulls a loaf out and holds it in front of the beak
+  const bread = c.img('bread', crumbBeak.x, ground - 60, { depth: 12, scale: 0.2 });
+  await c.move(bread, { x: crumbBeak.x, y: crumbBeak.y, scale: 1.1 }, 450, 'Back.out');
+  await c.wait(250);
+  // RIP! Three pieces: one stays with Crumb, one goes to the pigeon, a little one for the duckling
+  const forCrumb = c.img('bread', crumbBeak.x, crumbBeak.y, { depth: 12, scale: 0.6 });
+  const forPigeon = c.img('bread', crumbBeak.x, crumbBeak.y, { depth: 12, scale: 0.6 });
+  const forBaby = c.img('bread', crumbBeak.x, crumbBeak.y, { depth: 12, scale: 0.4 });
   bread.destroy();
   c.cameras.main.shake(150, 0.003);
   audio.sfx.rip();
-  c.move(halfL, { x: 440, y: ground - 95, angle: -15 }, 400);
-  await c.move(halfR, { x: 600, y: ground - 95, angle: 15 }, 900, 'Quad.out');
-  await c.say('Crumb', 'Here. There\'s enough for both of us.');
+  c.move(forCrumb, { angle: -10 }, 300);
+  c.move(forBaby, { x: babyBeak.x, y: babyBeak.y, angle: 10 }, 700, 'Sine.inOut');
+  await c.move(forPigeon, { x: pigeonBeak.x, y: pigeonBeak.y, angle: 15 }, 900, 'Sine.inOut');
+  await c.say('Crumb', 'Here. There\'s enough for all three of us.');
   await c.say('Pigeon', '...Really? For me?');
   await c.say('Pigeon', 'Coo!! Thank you, duck!');
   await c.say('Crumb', 'The name\'s Crumb.');
@@ -444,18 +674,18 @@ async function ending(c) {
   }
   await c.wait(1200);
 
-  await c.say('', 'And so Crumb and the pigeon sat on an asteroid, sharing bread and watching the Earth turn.');
+  await c.say('', 'And so Crumb, the little duckling and the pigeon sat on an asteroid, sharing bread and watching the Earth turn.');
 
-  // slowly drift towards the Earth for the ending card
+  // zoom back out and drift towards the Earth for the ending card
+  c.zoomTo(1, W / 2, H / 2, 1500);
   c.move(earth, { scale: 1.4, x: W / 2, y: 220 }, 3000);
   await c.wait(800);
-  const { width: W2 } = c.scale;
-  const end1 = c.add.text(W2 / 2, 120, 'THE END', {
+  const end1 = c.ui(c.add.text(W / 2, 120, 'THE END', {
     fontFamily: FONT, fontSize: '84px', fontStyle: 'bold', color: '#fff4dc', stroke: '#3b1d4a', strokeThickness: 12,
-  }).setOrigin(0.5).setDepth(96).setAlpha(0);
-  const end2 = c.add.text(W2 / 2, 200, 'Thanks for playing Duck Dash!', {
+  }).setOrigin(0.5).setDepth(96).setAlpha(0));
+  const end2 = c.ui(c.add.text(W / 2, 200, 'Thanks for playing Duck Dash!', {
     fontFamily: FONT, fontSize: '32px', color: '#ffd23f',
-  }).setOrigin(0.5).setDepth(96).setAlpha(0);
+  }).setOrigin(0.5).setDepth(96).setAlpha(0));
   await c.move([end1, end2], { alpha: 1 }, 1200);
   await c.say('', 'Press Space to go back to the menu.');
 }
