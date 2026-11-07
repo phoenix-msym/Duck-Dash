@@ -20,6 +20,53 @@ export function makeTextures(scene) {
   makeSun(scene);
   makeDot(scene, 'star', 2, 0xffffff);
   makeFeather(scene);
+  makeDuckBack(scene, 'duckRunA', 0);
+  makeDuckBack(scene, 'duckRunB', 1);
+  makeDuckBack(scene, 'duckJump', 2);
+  makeGlow(scene);
+}
+
+// Crumb seen from behind, for the space tunnel level. pose: 0/1 = running steps, 2 = jumping
+function makeDuckBack(scene, key, pose) {
+  const g = scene.make.graphics({ add: false });
+  // feet
+  g.fillStyle(ORANGE);
+  const leftFootY = pose === 0 ? 74 : 68, rightFootY = pose === 1 ? 74 : 68;
+  if (pose === 2) { g.fillEllipse(24, 70, 12, 7); g.fillEllipse(40, 70, 12, 7); }
+  else { g.fillEllipse(23, leftFootY, 13, 8); g.fillEllipse(41, rightFootY, 13, 8); }
+  // wings (raised when jumping)
+  g.fillStyle(YELLOW_DARK);
+  if (pose === 2) {
+    g.fillTriangle(14, 44, 0, 18, 8, 50);
+    g.fillTriangle(50, 44, 64, 18, 56, 50);
+  } else {
+    g.fillEllipse(11, 46 + (pose === 0 ? -2 : 2), 12, 24);
+    g.fillEllipse(53, 46 + (pose === 1 ? -2 : 2), 12, 24);
+  }
+  // body
+  g.fillStyle(YELLOW); g.fillEllipse(32, 46, 42, 40);
+  // tail tuft
+  g.fillStyle(YELLOW_DARK); g.fillTriangle(26, 60, 32, 50, 38, 60);
+  // head (back of it)
+  g.fillStyle(YELLOW); g.fillCircle(32, 20, 14);
+  g.fillTriangle(29, 8, 32, 0, 36, 8); // head feather
+  // beak tips peeking out on both sides
+  g.fillStyle(ORANGE); g.fillEllipse(18, 24, 6, 4); g.fillEllipse(46, 24, 6, 4);
+  // scarf with a tail flapping out to the side
+  g.fillStyle(SCARF);
+  g.fillRoundedRect(18, 30, 28, 7, 3);
+  const flap = pose === 1 ? 4 : -2;
+  g.fillTriangle(40, 32, 60, 26 + flap, 58, 36 + flap);
+  g.generateTexture(key, 64, 80);
+  g.destroy();
+}
+
+// soft round glow used for space nebula clouds
+function makeGlow(scene) {
+  const g = scene.make.graphics({ add: false });
+  for (let r = 128; r > 0; r -= 4) { g.fillStyle(0xffffff, 0.035); g.fillCircle(128, 128, r); }
+  g.generateTexture('glow', 256, 256);
+  g.destroy();
 }
 
 // Crumb the duck riding a dirt bike. The bike frame's centre is at (60, 60) in this 120x100 picture.

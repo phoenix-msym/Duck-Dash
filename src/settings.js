@@ -1,5 +1,5 @@
 // Player settings, saved in the browser so they survive a refresh.
-const KEY = 'lilypad-settings';
+const KEY = 'duckdash-settings';
 
 const DEFAULTS = {
   controlMode: 'keyboard',  // 'keyboard' | 'joystick' | 'camera'

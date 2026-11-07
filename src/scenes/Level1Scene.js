@@ -397,10 +397,11 @@ export class Level1Scene extends Phaser.Scene {
     this.add.text(W / 2, H / 2 - 65, `Time: ${Math.floor(secs / 60)}:${(secs % 60).toFixed(1).padStart(4, '0')}\nThe UFO is heading for space... Crumb won't give up!`,
       { ...style, fontSize: '24px' }).setOrigin(0.5).setScrollFactor(0).setDepth(61);
     const buttons = [
-      makeButton(this, W / 2, H / 2 + 40, 'Ride again', () => this.scene.restart(), { w: 280, h: 56, size: 26 }),
-      makeButton(this, W / 2, H / 2 + 120, 'Menu', () => this.scene.start('Menu'), { w: 280, h: 56, size: 26 }),
+      makeButton(this, W / 2, H / 2 + 20, 'Next level: Space!', () => this.scene.start('Level2'), { w: 340, h: 56, size: 26 }),
+      makeButton(this, W / 2, H / 2 + 90, 'Ride again', () => this.scene.restart(), { w: 340, h: 56, size: 26 }),
+      makeButton(this, W / 2, H / 2 + 160, 'Menu', () => this.scene.start('Menu'), { w: 340, h: 56, size: 26 }),
     ];
     buttons.forEach((b) => { b.bg.setScrollFactor(0).setDepth(61); b.text.setScrollFactor(0).setDepth(62); b.zone.setScrollFactor(0); });
-    keyboardMenu(this, buttons);
+    this.time.delayedCall(800, () => keyboardMenu(this, buttons));
   }
 }

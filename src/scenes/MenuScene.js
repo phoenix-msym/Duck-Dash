@@ -19,10 +19,10 @@ export class MenuScene extends Phaser.Scene {
     this.tweens.add({ targets: bread, y: 175, duration: 900, yoyo: true, repeat: -1, ease: 'Sine.inOut' });
 
     // title
-    this.add.text(W / 2 + 4, 150 + 6, 'LILY PAD DASH', {
+    this.add.text(W / 2 + 4, 150 + 6, 'DUCK DASH', {
       fontFamily: FONT, fontSize: '96px', fontStyle: 'bold', color: '#3b1d4a',
     }).setOrigin(0.5).setAlpha(0.4);
-    const title = this.add.text(W / 2, 150, 'LILY PAD DASH', {
+    const title = this.add.text(W / 2, 150, 'DUCK DASH', {
       fontFamily: FONT, fontSize: '96px', fontStyle: 'bold', color: '#fff4dc',
       stroke: '#3b1d4a', strokeThickness: 10,
     }).setOrigin(0.5);

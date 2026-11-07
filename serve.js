@@ -1,4 +1,4 @@
-// Tiny local web server for Lily Pad Dash.
+// Tiny local web server for Duck Dash.
 // Run:  node serve.js   then open http://localhost:8080
 // (The webcam and Arduino features only work from localhost or https, not by double-clicking index.html.)
 const http = require('http');
@@ -23,4 +23,4 @@ http.createServer((req, res) => {
     res.writeHead(200, { 'Content-Type': TYPES[path.extname(file)] || 'application/octet-stream', 'Cache-Control': 'no-store' });
     res.end(data);
   });
-}).listen(PORT, () => console.log(`Lily Pad Dash running at http://localhost:${PORT}`));
+}).listen(PORT, () => console.log(`Duck Dash running at http://localhost:${PORT}`));
