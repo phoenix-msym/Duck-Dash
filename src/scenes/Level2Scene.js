@@ -1,7 +1,10 @@
 import { makeTextures } from '../art.js';
 import { createControls } from '../controls.js';
+import { settings } from '../settings.js';
+import { gyro } from '../gyro.js';
 import { buildLevel2, LANES, LANES_PER_SIDE, SIDES } from '../level2Track.js';
 import { makeButton, keyboardMenu, FONT } from '../ui.js';
+import { audio } from '../audio.js';
 
 // ---- Runner tuning ----
 const SPEEDS = [7.5, 8.5, 9.5, 10.5, 11.5]; // rows per second in each area
@@ -64,6 +67,7 @@ export class Level2Scene extends Phaser.Scene {
     this.elapsed = 0;
     this.finished = false;
     this.runAnim = 0;
+    audio.music('space');
 
     // pre-work out the corners of every lane, so drawing is fast
     this.laneEdges = [];
@@ -97,6 +101,9 @@ export class Level2Scene extends Phaser.Scene {
 
     this.input.keyboard.on('keydown-R', () => { if (!this.finished) this.spawn(); });
     this.input.keyboard.on('keydown-ESC', () => this.scene.start('Menu'));
+    if (settings.controlMode === 'gyro' && !gyro.ready()) {
+      this.time.delayedCall(600, () => this.showToast('Connect the HW-123 in Settings'));
+    }
   }
 
   spawn() {
@@ -106,7 +113,7 @@ export class Level2Scene extends Phaser.Scene {
       z: row + 2,
       u: side * LANES_PER_SIDE + LANES_PER_SIDE / 2, // middle of whatever side you were on
       h: 0, vh: 0,
-      grounded: true, offGroundTime: 0, falling: false, dead: false,
+      grounded: true, offGroundTime: 0, falling: false, dead: false, didDouble: false,
     };
     if (this.roll === undefined) this.roll = 0;
   }
@@ -139,7 +146,7 @@ export class Level2Scene extends Phaser.Scene {
   movePlayer(dt) {
     const p = this.player;
     const c = this.controls.read();
-    const wantJump = c.forward > 0.5 || this.space.isDown;
+    const wantJump = c.forward > 0.5 || this.space.isDown || gyro.takeJump();
 
     p.z += SPEEDS[Math.min(this.cpIndex, SPEEDS.length - 1)] * dt;
     p.u += (c.right - c.left) * SIDE_SPEED * dt;
@@ -148,20 +155,30 @@ export class Level2Scene extends Phaser.Scene {
       if (!this.tileAt(p.z, p.u)) { p.grounded = false; p.offGroundTime = 0; p.vh = 0; }
     }
     if (p.grounded) {
-      if (wantJump) { p.grounded = false; p.vh = JUMP_POWER; p.offGroundTime = 1; }
+      if (wantJump) { p.grounded = false; p.vh = JUMP_POWER; p.offGroundTime = 1; p.didDouble = false; audio.sfx.jump(); }
     } else {
+      // Third flick of a quick series: one extra hop. Finger tilt does not do this.
+      if (!p.didDouble && gyro.takeDoubleJump()) { p.vh = JUMP_POWER; p.didDouble = true; p.falling = false; audio.sfx.jump(); }
       p.offGroundTime += dt;
       // "coyote time": a tiny moment after running off an edge where you can still jump
       if (wantJump && p.vh <= 0 && p.offGroundTime < COYOTE_TIME && p.h > -0.3) {
         p.vh = JUMP_POWER; p.offGroundTime = 1;
+        audio.sfx.jump();
       }
       const g = GRAVITY * (c.back > 0.5 && p.h > 0 ? FAST_FALL : 1);
       p.vh -= g * dt;
       p.h += p.vh * dt;
       // landing
       if (p.h <= 0 && p.vh <= 0) {
-        if (p.h > -0.35 && this.tileAt(p.z, p.u)) { p.h = 0; p.vh = 0; p.grounded = true; }
-        else p.falling = true;
+        if (p.h > -0.35 && this.tileAt(p.z, p.u)) {
+          p.h = 0; p.vh = 0; p.grounded = true; p.didDouble = false;
+          gyro.doubleEdge = false;
+          audio.sfx.land();
+        }
+        else {
+          if (!p.falling) audio.sfx.fall(); // just started dropping into space
+          p.falling = true;
+        }
       }
       if (p.h < -3.5 && !p.dead) this.lostInSpace();
     }
@@ -171,6 +188,7 @@ export class Level2Scene extends Phaser.Scene {
     if (next !== undefined && p.z > next) {
       this.cpIndex++;
       this.showToast(`Checkpoint ${this.cpIndex}!`);
+      audio.sfx.checkpoint();
     }
     if (p.z > this.track.finishRow) this.finish();
   }
@@ -342,6 +360,7 @@ export class Level2Scene extends Phaser.Scene {
     if (this.finished) return;
     this.finished = true;
     const { width: W, height: H } = this.scale;
+    audio.sfx.finish();
     this.tweens.add({ targets: [this.ufo, this.bread], scale: 1.2, y: this.cy - 120, duration: 1500, ease: 'Cubic.out' });
 
     const secs = this.elapsed / 1000;
@@ -353,8 +372,9 @@ export class Level2Scene extends Phaser.Scene {
       `Time: ${Math.floor(secs / 60)}:${(secs % 60).toFixed(1).padStart(4, '0')}\nCrumb caught up to the UFO... but who is flying it?`,
       { ...style, fontSize: '24px' }).setOrigin(0.5).setDepth(61);
     const buttons = [
-      makeButton(this, W / 2, H / 2 + 40, 'Run again', () => this.scene.restart(), { w: 280, h: 56, size: 26 }),
-      makeButton(this, W / 2, H / 2 + 120, 'Menu', () => this.scene.start('Menu'), { w: 280, h: 56, size: 26 }),
+      makeButton(this, W / 2, H / 2 + 20, 'Find out who!', () => this.scene.start('Cutscene', { id: 'ending', next: 'Menu' }), { w: 320, h: 56, size: 26 }),
+      makeButton(this, W / 2, H / 2 + 90, 'Run again', () => this.scene.restart(), { w: 320, h: 56, size: 26 }),
+      makeButton(this, W / 2, H / 2 + 160, 'Menu', () => this.scene.start('Menu'), { w: 320, h: 56, size: 26 }),
     ];
     buttons.forEach((b) => { b.bg.setDepth(61); b.text.setDepth(62); });
     // wait a moment before keys work, so a last-second jump doesn't press a button

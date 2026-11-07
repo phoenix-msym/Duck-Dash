@@ -1,4 +1,5 @@
 // Small helpers for buttons and the sunset background used on menu screens.
+import { audio } from './audio.js';
 
 export const FONT = '"Trebuchet MS", "Segoe UI", sans-serif';
 
@@ -26,7 +27,7 @@ export function makeButton(scene, x, y, label, onClick, opts = {}) {
   };
   zone.on('pointerover', () => { btn.hovered = true; btn.draw(); });
   zone.on('pointerout', () => { btn.hovered = false; btn.draw(); });
-  zone.on('pointerdown', () => onClick());
+  zone.on('pointerdown', () => { audio.sfx.click(); onClick(); });
   btn.draw();
   return btn;
 }
@@ -39,13 +40,15 @@ export function keyboardMenu(scene, buttons) {
     buttons.forEach((b, j) => b.setSelected(j === index));
   };
   select(0);
+  const move = (d) => { select(index + d); audio.sfx.select(); };
+  const press = () => { audio.sfx.click(); buttons[index].onClick(); };
   const kb = scene.input.keyboard;
-  kb.on('keydown-W', () => select(index - 1));
-  kb.on('keydown-UP', () => select(index - 1));
-  kb.on('keydown-S', () => select(index + 1));
-  kb.on('keydown-DOWN', () => select(index + 1));
-  kb.on('keydown-ENTER', () => buttons[index].onClick());
-  kb.on('keydown-SPACE', () => buttons[index].onClick());
+  kb.on('keydown-W', () => move(-1));
+  kb.on('keydown-UP', () => move(-1));
+  kb.on('keydown-S', () => move(1));
+  kb.on('keydown-DOWN', () => move(1));
+  kb.on('keydown-ENTER', press);
+  kb.on('keydown-SPACE', press);
   return { select };
 }
 

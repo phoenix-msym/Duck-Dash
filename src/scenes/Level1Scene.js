@@ -1,7 +1,10 @@
 import { makeTextures } from '../art.js';
 import { createControls } from '../controls.js';
+import { settings } from '../settings.js';
+import { gyro } from '../gyro.js';
 import { buildLevel1, groundYAt } from '../level1Track.js';
 import { makeButton, keyboardMenu, FONT } from '../ui.js';
+import { audio } from '../audio.js';
 
 // ---- Bike tuning (change these to make the bike feel different) ----
 const MAX_WHEEL_SPIN = 0.8;   // top speed
@@ -39,6 +42,9 @@ export class Level1Scene extends Phaser.Scene {
     this.finished = false;
     this.elapsed = 0;
     this.wheelsTouching = new Set();
+    this.airTime = 0;
+    audio.music('sunset');
+    this.events.once('shutdown', () => audio.engineStop());
 
     this.makeBackground();
     this.makeGround();
@@ -62,6 +68,9 @@ export class Level1Scene extends Phaser.Scene {
 
     this.input.keyboard.on('keydown-R', () => { if (!this.finished) this.respawn(); });
     this.input.keyboard.on('keydown-ESC', () => this.scene.start('Menu'));
+    if (settings.controlMode === 'gyro' && !gyro.ready()) {
+      this.time.delayedCall(600, () => this.showToast('Connect the HW-123 in Settings'));
+    }
   }
 
   // ------------------------------------------------------------------ background
@@ -264,6 +273,7 @@ export class Level1Scene extends Phaser.Scene {
     const p = this.bike.head.position;
     this.feathers.explode(16, p.x, p.y);
     this.cameras.main.shake(250, 0.01);
+    audio.sfx.bonk();
     const bonk = this.add.text(p.x, p.y - 40, 'BONK!', {
       fontFamily: FONT, fontSize: '48px', fontStyle: 'bold', color: '#ffe066', stroke: '#3b1d4a', strokeThickness: 8,
     }).setOrigin(0.5).setDepth(30);
@@ -355,10 +365,19 @@ export class Level1Scene extends Phaser.Scene {
       }
     }
 
+    // engine hum follows wheel speed; a thud when you land after a jump
+    audio.engine(this.crashed ? 0 : Phaser.Math.Clamp(Math.abs(back.angularVelocity) / MAX_WHEEL_SPIN, 0, 1));
+    if (this.wheelsTouching.size === 0) this.airTime += delta;
+    else {
+      if (this.airTime > 350 && !this.crashed) audio.sfx.land();
+      this.airTime = 0;
+    }
+
     // fell into a gap
     if (frame.position.y > this.deathY && !this.crashed) {
       this.crashed = true;
       this.showToast('Splat! Try again');
+      audio.sfx.fall();
       this.time.delayedCall(700, () => this.respawn());
     }
 
@@ -376,6 +395,7 @@ export class Level1Scene extends Phaser.Scene {
       this.cpIndex++;
       this.flags[this.cpIndex].setTexture('flagOn');
       this.showToast(`Checkpoint ${this.cpIndex}!`);
+      audio.sfx.checkpoint();
     }
 
     // finish line
@@ -385,6 +405,9 @@ export class Level1Scene extends Phaser.Scene {
   finish() {
     this.finished = true;
     const { width: W, height: H } = this.scale;
+    audio.engineStop();
+    audio.sfx.finish();
+    audio.sfx.whoosh();
     // the UFO blasts off toward space
     this.tweens.add({ targets: [this.ufo, this.bread], y: '-=400', x: '+=200', duration: 1600, ease: 'Cubic.in' });
 
@@ -397,7 +420,7 @@ export class Level1Scene extends Phaser.Scene {
     this.add.text(W / 2, H / 2 - 65, `Time: ${Math.floor(secs / 60)}:${(secs % 60).toFixed(1).padStart(4, '0')}\nThe UFO is heading for space... Crumb won't give up!`,
       { ...style, fontSize: '24px' }).setOrigin(0.5).setScrollFactor(0).setDepth(61);
     const buttons = [
-      makeButton(this, W / 2, H / 2 + 20, 'Next level: Space!', () => this.scene.start('Level2'), { w: 340, h: 56, size: 26 }),
+      makeButton(this, W / 2, H / 2 + 20, 'Next level: Space!', () => this.scene.start('Cutscene', { id: 'middle', next: 'Level2' }), { w: 340, h: 56, size: 26 }),
       makeButton(this, W / 2, H / 2 + 90, 'Ride again', () => this.scene.restart(), { w: 340, h: 56, size: 26 }),
       makeButton(this, W / 2, H / 2 + 160, 'Menu', () => this.scene.start('Menu'), { w: 340, h: 56, size: 26 }),
     ];

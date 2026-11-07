@@ -24,6 +24,83 @@ export function makeTextures(scene) {
   makeDuckBack(scene, 'duckRunB', 1);
   makeDuckBack(scene, 'duckJump', 2);
   makeGlow(scene);
+  makeDuckStand(scene);
+  makePigeon(scene);
+  makeEarth(scene);
+}
+
+// Crumb standing, side view, facing right (for cutscenes). Feet at the bottom middle.
+function makeDuckStand(scene) {
+  const g = scene.make.graphics({ add: false });
+  // legs + feet
+  g.lineStyle(4, ORANGE);
+  g.beginPath(); g.moveTo(32, 54); g.lineTo(32, 70); g.strokePath();
+  g.beginPath(); g.moveTo(42, 54); g.lineTo(42, 70); g.strokePath();
+  g.fillStyle(ORANGE); g.fillEllipse(36, 72, 12, 5); g.fillEllipse(46, 72, 12, 5);
+  // tail
+  g.fillStyle(YELLOW); g.fillTriangle(14, 36, 4, 28, 16, 48);
+  // body
+  g.fillEllipse(36, 44, 46, 30);
+  // wing
+  g.fillStyle(YELLOW_DARK); g.fillEllipse(32, 44, 26, 14);
+  // scarf
+  g.fillStyle(SCARF); g.fillRoundedRect(44, 26, 18, 7, 3); g.fillTriangle(46, 28, 30, 24, 34, 34);
+  // head
+  g.fillStyle(YELLOW); g.fillCircle(54, 18, 13);
+  g.fillTriangle(48, 8, 50, 0, 54, 7);
+  // beak
+  g.fillStyle(ORANGE); g.fillEllipse(70, 22, 16, 8);
+  g.fillStyle(0xd9700f); g.fillRect(63, 22, 14, 1);
+  // eye
+  g.fillStyle(0x1a1a1a); g.fillCircle(58, 15, 2.8);
+  g.fillStyle(0xffffff); g.fillCircle(59, 14, 1);
+  g.generateTexture('duckStand', 80, 78);
+  g.destroy();
+}
+
+// The UFO pilot, finally revealed: a scruffy city pigeon. Side view, facing left.
+function makePigeon(scene) {
+  const g = scene.make.graphics({ add: false });
+  // legs
+  g.lineStyle(4, 0xd9707a);
+  g.beginPath(); g.moveTo(36, 54); g.lineTo(36, 70); g.strokePath();
+  g.beginPath(); g.moveTo(46, 54); g.lineTo(46, 70); g.strokePath();
+  g.fillStyle(0xd9707a); g.fillEllipse(32, 72, 12, 5); g.fillEllipse(42, 72, 12, 5);
+  // tail fan
+  g.fillStyle(0x4e5361); g.fillTriangle(62, 38, 80, 32, 78, 50);
+  // body
+  g.fillStyle(0x8a8f9e); g.fillEllipse(42, 44, 46, 30);
+  // wing with two dark bars
+  g.fillStyle(0x6d7282); g.fillEllipse(48, 42, 28, 16);
+  g.fillStyle(0x2e313a); g.fillRect(44, 40, 14, 3); g.fillRect(46, 46, 14, 3);
+  // shiny green/purple neck
+  g.fillStyle(0x4fa38a); g.fillEllipse(26, 32, 20, 16);
+  g.fillStyle(0x8a5fa8); g.fillEllipse(30, 36, 14, 10);
+  // head
+  g.fillStyle(0x7d8291); g.fillCircle(22, 18, 12);
+  // scruffy head feathers
+  g.fillTriangle(20, 7, 18, 0, 25, 6);
+  g.fillTriangle(25, 7, 27, 1, 29, 8);
+  // beak
+  g.fillStyle(0x2e313a); g.fillTriangle(10, 18, 2, 23, 11, 24);
+  g.fillStyle(0xeeeeee); g.fillEllipse(12, 18, 5, 3);
+  // orange eye
+  g.fillStyle(0xff8c1a); g.fillCircle(18, 15, 4);
+  g.fillStyle(0x111111); g.fillCircle(18, 15, 2);
+  g.generateTexture('pigeon', 82, 78);
+  g.destroy();
+}
+
+function makeEarth(scene) {
+  const g = scene.make.graphics({ add: false });
+  for (let r = 150; r > 120; r -= 3) { g.fillStyle(0x7fd3ff, 0.05); g.fillCircle(150, 150, r); }
+  g.fillStyle(0x2f6fd6); g.fillCircle(150, 150, 120);
+  g.fillStyle(0x4cc26a);
+  g.fillEllipse(110, 110, 90, 60); g.fillEllipse(190, 170, 70, 90); g.fillEllipse(95, 190, 50, 40);
+  g.fillStyle(0xffffff, 0.8);
+  g.fillEllipse(160, 80, 80, 14); g.fillEllipse(80, 160, 60, 12); g.fillEllipse(200, 220, 50, 10);
+  g.generateTexture('earth', 300, 300);
+  g.destroy();
 }
 
 // Crumb seen from behind, for the space tunnel level. pose: 0/1 = running steps, 2 = jumping
@@ -71,7 +148,13 @@ function makeGlow(scene) {
 
 // Crumb the duck riding a dirt bike. The bike frame's centre is at (60, 60) in this 120x100 picture.
 // The wheels are separate sprites so they can spin.
+// Also makes 'bikeEmpty': the same bike with nobody on it (for cutscenes).
 function makeBike(scene) {
+  const empty = scene.make.graphics({ add: false });
+  drawBikeFrame(empty);
+  empty.generateTexture('bikeEmpty', 120, 100);
+  empty.destroy();
+
   const g = scene.make.graphics({ add: false });
 
   // scarf trailing behind (drawn first so it's behind the duck)
@@ -79,7 +162,13 @@ function makeBike(scene) {
   g.fillTriangle(62, 34, 30, 30, 34, 40);
   g.fillTriangle(34, 30, 22, 26, 26, 36);
 
-  // bike frame
+  drawBikeFrame(g);
+  drawRider(g);
+  g.generateTexture('bike', 120, 100);
+  g.destroy();
+}
+
+function drawBikeFrame(g) {
   g.lineStyle(6, 0x2e9cca);
   g.beginPath(); g.moveTo(30, 80); g.lineTo(48, 58); g.lineTo(84, 52); g.lineTo(90, 80); g.strokePath();
   g.lineStyle(5, 0x22779b);
@@ -93,7 +182,9 @@ function makeBike(scene) {
   g.fillStyle(0xffffff); g.fillRoundedRect(84, 46, 10, 12, 2);
   g.lineStyle(4, 0x333333);
   g.beginPath(); g.moveTo(84, 52); g.lineTo(90, 38); g.strokePath();
+}
 
+function drawRider(g) {
   // duck leg to the foot peg
   g.lineStyle(4, ORANGE);
   g.beginPath(); g.moveTo(54, 50); g.lineTo(60, 66); g.lineTo(66, 66); g.strokePath();
@@ -120,9 +211,6 @@ function makeBike(scene) {
   g.beginPath(); g.moveTo(70, 16); g.lineTo(77, 18); g.strokePath();
   // tiny head feather
   g.fillStyle(YELLOW); g.fillTriangle(64, 15, 66, 8, 69, 14);
-
-  g.generateTexture('bike', 120, 100);
-  g.destroy();
 }
 
 function makeWheel(scene) {

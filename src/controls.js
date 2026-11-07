@@ -1,11 +1,11 @@
 // One place where the game asks "what is the player pressing?"
 //
-// Every input device (keyboard, Arduino joystick, webcam) writes into the same
-// four numbers between 0 and 1:  forward, back, left, right.
-// The levels only ever call controls.read(), so adding the joystick or camera
-// later doesn't change any level code.
+// Keyboard and the HW-123 gyro both write four numbers between 0 and 1:
+// forward, back, left, right. The levels only ever call controls.read().
 
-// The joystick / camera code (coming next) will write into this object.
+import { syncGyro } from './gyro.js';
+
+// The gyro writes into this object. Keyboard is mixed in below.
 export const externalInput = { forward: 0, back: 0, left: 0, right: 0, active: false };
 
 export function createControls(scene) {
@@ -17,7 +17,8 @@ export function createControls(scene) {
 
   return {
     read() {
-      // Keyboard always works, even in joystick/camera mode, as a backup.
+      syncGyro();
+      // Keyboard always works, even in gyro or camera mode, as a backup.
       const k = {
         forward: keys.W.isDown || keys.UP.isDown ? 1 : 0,
         back: keys.S.isDown || keys.DOWN.isDown ? 1 : 0,

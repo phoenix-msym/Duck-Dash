@@ -1,16 +1,12 @@
 import { makeTextures } from '../art.js';
 import { makeButton, sunsetBackdrop, FONT } from '../ui.js';
 import { settings, saveSettings } from '../settings.js';
+import { gyro } from '../gyro.js';
+import { audio } from '../audio.js';
 
 const CONTROL_OPTIONS = [
   { value: 'keyboard', label: 'Keyboard' },
-  { value: 'joystick', label: 'Arduino Joystick' },
-  { value: 'camera', label: 'Camera' },
-];
-const CAMERA_OPTIONS = [
-  { value: 'hand', label: 'Hand' },
-  { value: 'head', label: 'Head' },
-  { value: 'custom', label: 'Custom' },
+  { value: 'gyro', label: 'HW-123 Gyro' },
 ];
 
 export class SettingsScene extends Phaser.Scene {
@@ -22,7 +18,7 @@ export class SettingsScene extends Phaser.Scene {
     sunsetBackdrop(this);
 
     const panel = this.add.graphics();
-    panel.fillStyle(0x2a1440, 0.78); panel.fillRoundedRect(W / 2 - 480, 60, 960, 560, 28);
+    panel.fillStyle(0x2a1440, 0.78); panel.fillRoundedRect(W / 2 - 480, 40, 960, 640, 28);
 
     this.add.text(W / 2, 110, 'Settings', {
       fontFamily: FONT, fontSize: '56px', fontStyle: 'bold', color: '#fff4dc',
@@ -31,14 +27,20 @@ export class SettingsScene extends Phaser.Scene {
     this.add.text(W / 2, 185, 'Controls', { fontFamily: FONT, fontSize: '28px', color: '#ffd23f' }).setOrigin(0.5);
     this.controlButtons = this.row(250, CONTROL_OPTIONS, 'controlMode');
 
-    this.camLabel = this.add.text(W / 2, 330, 'Camera tracking', { fontFamily: FONT, fontSize: '28px', color: '#ffd23f' }).setOrigin(0.5);
-    this.cameraButtons = this.row(395, CAMERA_OPTIONS, 'cameraMode');
+    this.add.text(W / 2, 330, 'Sound', { fontFamily: FONT, fontSize: '28px', color: '#ffd23f' }).setOrigin(0.5);
+    this.musicButton = makeButton(this, W / 2 - 145, 395, '', () => { audio.setMusicOn(settings.musicOn === false); this.refresh(); }, { w: 260, h: 56, size: 24 });
+    this.sfxButton = makeButton(this, W / 2 + 145, 395, '', () => { audio.setSfxOn(settings.sfxOn === false); this.refresh(); }, { w: 260, h: 56, size: 24 });
+    audio.music('menu');
 
-    this.note = this.add.text(W / 2, 480, '', {
+    this.note = this.add.text(W / 2, 470, '', {
       fontFamily: FONT, fontSize: '20px', color: '#fff4dc', align: 'center', wordWrap: { width: 820 },
     }).setOrigin(0.5);
+    this.gyroStatus = this.add.text(W / 2, 545, '', {
+      fontFamily: FONT, fontSize: '18px', color: '#b6ff3b', align: 'center', wordWrap: { width: 820 },
+    }).setOrigin(0.5);
 
-    makeButton(this, W / 2, 570, 'Back', () => this.scene.start('Menu'), { w: 220, h: 56, size: 26 }).setSelected(true);
+    this.connectButton = makeButton(this, W / 2 - 150, 620, 'Connect', () => this.toggleGyro(), { w: 260, h: 56, size: 24 });
+    makeButton(this, W / 2 + 150, 620, 'Back', () => this.scene.start('Menu'), { w: 220, h: 56, size: 26 }).setSelected(true);
     this.input.keyboard.on('keydown-ESC', () => this.scene.start('Menu'));
     this.input.keyboard.on('keydown-ENTER', () => this.scene.start('Menu'));
 
@@ -63,22 +65,37 @@ export class SettingsScene extends Phaser.Scene {
 
   refresh() {
     this.controlButtons.forEach((b) => b.setSelected(b.value === settings.controlMode));
-    const camOn = settings.controlMode === 'camera';
-    this.cameraButtons.forEach((b) => {
-      b.setSelected(camOn && b.value === settings.cameraMode);
-      b.text.setAlpha(camOn ? 1 : 0.4);
-    });
-    this.camLabel.setAlpha(camOn ? 1 : 0.4);
+    const musicOn = settings.musicOn !== false, sfxOn = settings.sfxOn !== false;
+    this.musicButton.text.setText(`Music: ${musicOn ? 'On' : 'Off'}`);
+    this.musicButton.setSelected(musicOn);
+    this.sfxButton.text.setText(`Sounds: ${sfxOn ? 'On' : 'Off'}`);
+    this.sfxButton.setSelected(sfxOn);
 
     const notes = {
       keyboard: 'W = go   S = brake   A / D = tilt back / forward',
-      joystick: 'Plug in the Arduino joystick. You\'ll pick its port when the level starts.\n(Joystick support is the next thing being built. The keyboard still works meanwhile.)',
-      camera: {
-        hand: 'Hold your hand up to the webcam and tilt it to lean Crumb.\n(Camera controls are coming soon. The keyboard still works meanwhile.)',
-        head: 'Tilt your head left and right to lean Crumb.\n(Camera controls are coming soon. The keyboard still works meanwhile.)',
-        custom: 'Set up your own camera moves.\n(Still being designed. The keyboard still works meanwhile.)',
-      }[settings.cameraMode],
+      gyro: 'Tilt the HW-123 right and left to lean. On the bike, tip it forward for gas and back to brake. In the tunnel, a quick double flick jumps and a third flick double jumps.\nPlug the Arduino in, press Connect, and pick its port. Close the Serial Monitor first.',
     };
     this.note.setText(notes[settings.controlMode]);
+
+    const gyroOn = settings.controlMode === 'gyro';
+    this.connectButton.text.setText(gyro.ready() || gyro.status === 'waiting' || gyro.status === 'connecting' ? 'Disconnect' : 'Connect');
+    this.connectButton.text.setAlpha(gyroOn ? 1 : 0.35);
+    this.connectButton.bg.setAlpha(gyroOn ? 1 : 0.35);
+    if (gyroOn) this.connectButton.zone.setInteractive({ useHandCursor: true });
+    else this.connectButton.zone.disableInteractive();
+    this.gyroStatus.setText(gyroOn ? gyro.describe() : '');
+  }
+
+  async toggleGyro() {
+    if (settings.controlMode !== 'gyro') return;
+    if (gyro.status === 'off' || gyro.status === 'error') await gyro.connect(true);
+    else await gyro.disconnect();
+    this.refresh();
+  }
+
+  update() {
+    if (settings.controlMode !== 'gyro') return;
+    const live = gyro.describe();
+    if (live !== this.gyroStatus.text) this.gyroStatus.setText(live);
   }
 }

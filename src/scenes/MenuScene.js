@@ -1,5 +1,6 @@
 import { makeTextures } from '../art.js';
 import { makeButton, keyboardMenu, sunsetBackdrop, FONT } from '../ui.js';
+import { audio } from '../audio.js';
 
 export class MenuScene extends Phaser.Scene {
   constructor() { super('Menu'); }
@@ -8,6 +9,8 @@ export class MenuScene extends Phaser.Scene {
     makeTextures(this);
     const { width: W, height: H } = this.scale;
     sunsetBackdrop(this);
+    audio.music('menu');
+    audio.engineStop();
 
     // the UFO drifting across the sky with Crumb's bread
     const ufo = this.add.image(-200, 130, 'ufo');
@@ -42,7 +45,7 @@ export class MenuScene extends Phaser.Scene {
     this.tweens.add({ targets: crumb, y: H - 188, duration: 300, yoyo: true, repeat: -1, ease: 'Sine.inOut' });
 
     const buttons = [
-      makeButton(this, W / 2, 360, 'Play', () => this.scene.start('Level1')),
+      makeButton(this, W / 2, 360, 'Play', () => this.scene.start('Cutscene', { id: 'intro', next: 'Level1' })),
       makeButton(this, W / 2, 450, 'Settings', () => this.scene.start('Settings')),
     ];
     keyboardMenu(this, buttons);
