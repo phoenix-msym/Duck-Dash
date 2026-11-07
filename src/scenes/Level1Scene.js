@@ -3,7 +3,7 @@ import { createControls } from '../controls.js';
 import { settings } from '../settings.js';
 import { gyro } from '../gyro.js';
 import { buildLevel1, groundYAt } from '../level1Track.js';
-import { FONT, eraseSprites, unerase, levelCompletePanel } from '../ui.js';
+import { FONT, eraseSprites, unerase, levelCompletePanel, crumbHud } from '../ui.js';
 import { audio } from '../audio.js';
 import { addPauseButton } from './PauseScene.js';
 
@@ -53,9 +53,11 @@ export class Level1Scene extends Phaser.Scene {
     this.makeBackground();
     this.makeGround();
     this.makeFlagsAndSigns();
+    this.makePickups();
     this.makeBikeSprites();
     this.spawnBike(this.track.checkpoints[0]);
     this.makeHud();
+    this.crumbs = crumbHud(this, { fixed: true, total: this.crumbItems.length });
 
     const allY = this.track.pieces.flat().map((p) => p.y);
     this.deathY = Math.max(...allY) + 500;
@@ -204,6 +206,54 @@ export class Level1Scene extends Phaser.Scene {
       g.fillStyle(0x3b1d4a, 0.4); g.fillRoundedRect(s.x - w / 2 + 4, y - 140 - h / 2 + 5, w, h, 10);
       g.fillStyle(0xfff4dc); g.fillRoundedRect(s.x - w / 2, y - 140 - h / 2, w, h, 10);
       g.lineStyle(3, 0x6b4226); g.strokeRoundedRect(s.x - w / 2, y - 140 - h / 2, w, h, 10);
+    }
+  }
+
+  // bread crumbs to collect, and boost pads on the ground
+  makePickups() {
+    this.crumbItems = this.track.crumbs.map((c) => {
+      let y = c.y;
+      if (y === undefined) y = (groundYAt(this.track, c.x) ?? 560) - c.lift;
+      const img = this.add.image(c.x, y, 'crumb').setDepth(9);
+      this.tweens.add({ targets: img, y: y - 8, duration: 700 + Math.random() * 300, yoyo: true, repeat: -1, ease: 'Sine.inOut' });
+      this.tweens.add({ targets: img, angle: { from: -10, to: 10 }, duration: 900, yoyo: true, repeat: -1 });
+      return img;
+    });
+    this.boostPads = this.track.boosts.map((b) => {
+      const y = groundYAt(this.track, b.x) ?? 560;
+      const ahead = groundYAt(this.track, b.x + 40) ?? y;
+      const img = this.add.image(b.x, y - 4, 'boostPad').setDepth(3).setRotation(Math.atan2(ahead - y, 40));
+      this.tweens.add({ targets: img, alpha: 0.6, duration: 300, yoyo: true, repeat: -1 });
+      return { x: b.x, y, img, ready: 0 };
+    });
+  }
+
+  // grab crumbs near the bike, and fire boost pads you drive over
+  checkPickups() {
+    const { frame, chassis, back, front } = this.bike;
+    const { Body } = Phaser.Physics.Matter.Matter;
+    for (const img of this.crumbItems) {
+      if (!img.visible) continue;
+      if (Phaser.Math.Distance.Between(img.x, img.y, frame.position.x, frame.position.y - 20) < 60) {
+        img.setVisible(false);
+        this.crumbs.collect(img.x, img.y, true);
+      }
+    }
+    for (const pad of this.boostPads) {
+      if (this.elapsed < pad.ready) continue;
+      // drive over it (or skim just above it) to trigger
+      if (Math.abs(frame.position.x - pad.x) < 80 && frame.position.y > pad.y - 120 && frame.position.y < pad.y + 30) {
+        pad.ready = this.elapsed + 1500;
+        // a big shove forward along the ground
+        const dir = { x: Math.cos(chassis.angle), y: Math.sin(chassis.angle) };
+        for (const body of [chassis, back, front]) {
+          const v = body.velocity;
+          Body.setVelocity(body, { x: Math.min(v.x + dir.x * 9, 28), y: v.y + dir.y * 9 });
+        }
+        audio.sfx.boost();
+        this.showToast('BOOST!');
+        this.cameras.main.shake(150, 0.004);
+      }
     }
   }
 
@@ -424,6 +474,8 @@ export class Level1Scene extends Phaser.Scene {
       audio.sfx.checkpoint();
     }
 
+    if (!this.crashed) this.checkPickups();
+
     // finish line
     if (frame.position.x > this.track.finishX - 400 && !this.crashed) this.finish();
   }
@@ -439,6 +491,7 @@ export class Level1Scene extends Phaser.Scene {
     levelCompletePanel(this, {
       title: 'Level 1 complete!', secs: this.elapsed / 1000, limits: STAR_LIMITS, levelKey: 'level1',
       line: 'The UFO is heading for space... Crumb won\'t give up!', fixed: true,
+      crumbs: { got: this.crumbs.got, total: this.crumbs.total },
       onDone: () => this.scene.start('Cutscene', { id: 'middle', next: 'Level2' }),
     });
   }

@@ -25,6 +25,8 @@ export function buildLevel2() {
   const checkpoints = []; // row numbers
   const hints = [];       // {row, text}
   const winds = [];       // {start, end, dir}  dir: +1 pushes right, -1 pushes left
+  const rockZones = [];   // {start, end}  asteroids come flying down the tunnel here
+  const crumbs = [];      // {z, lane, h}  bread crumbs floating in the tunnel
   const rand = seededRandom(7);
   const LPS = LANES_PER_SIDE;
   const side = (lane) => Math.floor(lane / LPS);
@@ -45,65 +47,100 @@ export function buildLevel2() {
   const hint = (text) => hints.push({ row: rows.length, text });
   const checkpoint = () => { checkpoints.push(rows.length); full(10); };
 
-  // ---------------- Area 0: quick tutorial ----------------
+  // Five short sections for the demo, each with its own obstacle.
+
+  // ---------------- Section 1: the basics ----------------
   checkpoint();
-  hint('A / D = move left / right');
+  hint('A / D = move.  Grab the bread crumbs!');
+  crumbTrail(2, 5, 1, 0.5);
   full(14);
   make(10, (l) => !(side(l) === 0 && l % LPS < 2));
   full(6);
   hint('W or SPACE = JUMP!');
-  full(10);
+  full(8);
+  crumbTrail(1, 3, 1, 1.3); // floating over the gap: jump to get them
   make(3, () => false);
-  full(10);
-  hint('Lily pads = SPEED BOOST!');
-  full(6);
-  make(14, (l) => (side(l) === 0 ? (l % LPS === 1 || l % LPS === 2 ? PAD : TILE) : TILE));
-  full(6);
-  hint('Cracked tiles crumble! Keep moving!');
   full(8);
-  make(16, (l) => (side(l) === 0 ? CRACKED : TILE));
-  full(6);
   hint('Run onto the WALL. The tunnel turns with you!');
-  full(8);
-  make(20, (l) => side(l) !== 0);
-  full(8);
+  full(6);
+  crumbTrail(6, 4, 5, 0.5); // a trail leading onto the right wall
+  make(18, (l) => side(l) !== 0);
+  full(6);
 
-  // ---------------- Area 1: holes, cracks and lily pads ----------------
+  // ---------------- Section 2: holes, cracks and lily pads ----------------
   checkpoint();
-  mixedChunks(7, 1);
+  hint('Lily pads = SPEED BOOST!  Cracked tiles crumble!');
+  full(6);
+  make(10, (l) => (side(l) === 0 ? (l % LPS === 1 || l % LPS === 2 ? PAD : TILE) : TILE));
+  crumbTrail(0, 4, 2, 0.5);
+  crackedPatch(14);
+  full(5);
+  holes(20, 0.22);
+  full(5); // (no lily pads right before jumps: the boost would make you overshoot)
+  crumbTrail(2, 4, 13, 0.5);
+  jumpGap(2);
+  stepping(1);
+  crackedPatch(12);
+  full(6);
 
-  // ---------------- Area 2: WIND ----------------
+  // ---------------- Section 3: ASTEROIDS ----------------
+  checkpoint();
+  hint('ASTEROIDS! Side-step or jump over them!');
+  full(10);
+  rockZone(() => {
+    crumbTrail(4, 6, 9, 0.5);
+    holes(28, 0.14);
+    full(4);
+    missingSides(1);
+    holes(24, 0.16);
+  });
+  full(8);
+
+  // ---------------- Section 4: WIND ----------------
   checkpoint();
   hint('WIND ahead! Lean against it!');
-  full(14);
-  windZone(+1, () => holes(34, 0.18));
-  full(8);
+  full(12);
+  windZone(+1, () => { crumbTrail(4, 5, 0, 0.5); holes(26, 0.18); });
+  full(6);
   windZone(-1, () => narrowPath(1));
-  full(8);
+  full(6);
   windZone(+1, () => { jumpGap(3); stepping(1); });
-  full(8);
+  full(6);
 
-  // ---------------- Area 3: BOSS FIGHT ----------------
+  // ---------------- Section 5: the UFO fights back! ----------------
   checkpoint();
   const bossStart = rows.length;
-  hint('BOSS FIGHT! Dodge the bullets and the lasers!');
-  full(16);
-  holes(30, 0.14);
-  full(6);
-  make(20, (l) => (side(l) === 2 ? false : rand() > 0.12));
-  full(6);
-  holes(30, 0.16);
-  full(6);
-  crackedPatch(14);
-  full(6);
-  holes(26, 0.18);
+  hint('BOSS FIGHT! Dodge the blasts and the lasers!');
+  full(14);
+  crumbTrail(2, 5, 3, 0.5);
+  holes(26, 0.14);
+  full(5);
+  make(18, (l) => (side(l) === 2 ? false : rand() > 0.12));
+  full(5);
+  crumbTrail(0, 4, 10, 0.5);
+  holes(24, 0.16);
+  full(5);
+  crackedPatch(12);
+  full(5);
+  holes(22, 0.18);
   const bossEnd = rows.length;
   hint('You caught up to the UFO!');
   full(46);
 
-  return { rows, checkpoints, hints, winds, bossStart, bossEnd, finishRow: rows.length - 34 };
+  return { rows, checkpoints, hints, winds, rockZones, crumbs, bossStart, bossEnd, finishRow: rows.length - 34 };
 
   // ---- building blocks ----
+
+  // n bread crumbs in a line down one lane, starting "ahead" rows from here, every 2 rows, at height h
+  function crumbTrail(ahead, n, lane, h) {
+    for (let i = 0; i < n; i++) crumbs.push({ z: rows.length + ahead + i * 2 + 0.5, lane, h });
+  }
+
+  function rockZone(build) {
+    const start = rows.length;
+    build();
+    rockZones.push({ start, end: rows.length });
+  }
 
   function windZone(dir, build) {
     const start = rows.length;

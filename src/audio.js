@@ -323,6 +323,18 @@ export const audio = {
       if (!ensure()) return;
       for (let i = 0; i < 8; i++) tone({ freq: midiToHz(72 + i * 3), type: 'sine', start: ctx.currentTime + i * 0.05, dur: 0.3, vol: 0.12 });
     },
+    // bread crumb pickup: a quick happy two-note "bling"
+    crumb() {
+      if (!ensure()) return;
+      tone({ freq: midiToHz(88), type: 'triangle', dur: 0.08, vol: 0.14 });
+      tone({ freq: midiToHz(95), type: 'triangle', start: ctx.currentTime + 0.06, dur: 0.12, vol: 0.14 });
+    },
+    // boost pad / lily pad: a rising zoom
+    boost() {
+      if (!ensure()) return;
+      tone({ freq: 200, slideTo: 900, type: 'sawtooth', dur: 0.3, vol: 0.12, filter: { freq: 2400 } });
+      noise({ dur: 0.35, vol: 0.2, type: 'bandpass', freq: 600, freqTo: 3000, q: 1.5 });
+    },
     heart() { if (!ensure()) return; tone({ freq: midiToHz(84), type: 'sine', dur: 0.25, vol: 0.12 }); tone({ freq: midiToHz(88), type: 'sine', start: ctx.currentTime + 0.08, dur: 0.3, vol: 0.1 }); },
     rip() { if (!ensure()) return; noise({ dur: 0.25, vol: 0.4, type: 'bandpass', freq: 2500, freqTo: 900, q: 1.5 }); },
     // little voice blips while dialogue types out. Each character gets a different voice.

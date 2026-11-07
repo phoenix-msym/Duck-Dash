@@ -3,12 +3,12 @@ import { createControls } from '../controls.js';
 import { settings } from '../settings.js';
 import { gyro } from '../gyro.js';
 import { buildLevel2, LANES, LANES_PER_SIDE, SIDES, HOLE, PAD, CRACKED } from '../level2Track.js';
-import { FONT, eraseSprites, unerase, levelCompletePanel, fmtTime } from '../ui.js';
+import { FONT, eraseSprites, unerase, levelCompletePanel, fmtTime, crumbHud } from '../ui.js';
 import { audio } from '../audio.js';
 import { addPauseButton } from './PauseScene.js';
 
 // ---- Runner tuning ----
-const SPEEDS = [10, 11, 12, 12.5]; // rows per second in each area (tutorial, holes, wind, boss)
+const SPEEDS = [10, 11, 11.5, 12, 12.5]; // rows per second in each section (basics, holes, asteroids, wind, boss)
 const SIDE_SPEED = 8.5;   // lanes per second when holding A / D
 const JUMP_POWER = 10.2;
 const GRAVITY = 34.6;
@@ -16,9 +16,11 @@ const FAST_FALL = 2.5;    // gravity multiplier while holding S in the air
 const COYOTE_TIME = 0.12; // seconds you can still jump after running off an edge
 const BOOST = 1.6;        // lily pad speed multiplier
 const BOOST_TIME = 1.2;   // seconds a lily pad boost lasts
-const CRUMBLE_DELAY = 0.3;// seconds before a touched cracked tile falls
+const CRUMBLE_DELAY = 0.35;// seconds before a touched cracked tile falls
 const WIND = 3.2;         // lanes per second the wind pushes you
 const STAR_LIMITS = [75, 100]; // seconds: under the first = 3 stars, under the second = 2 stars
+const ROCK_EVERY = 0.55;  // seconds between asteroids in the asteroid section
+const ROCK_SPEED = 6;     // rows per second the asteroids tumble towards you
 
 // ---- Boss fight tuning ----
 const BULLET_EVERY = 0.8;  // seconds between bullets
@@ -41,12 +43,13 @@ const INSET = 0.06;       // small gap between tiles so you can see the grid
 const AREAS = [
   { bgTop: 0x050818, bgBottom: 0x141a48, tileA: 0x4d6bff, tileB: 0x3b52d1, nebula: 0x5d7dff },
   { bgTop: 0x0d0420, bgBottom: 0x341150, tileA: 0xb35cff, tileB: 0x8c3fd6, nebula: 0xd36bff },
-  { bgTop: 0x021317, bgBottom: 0x07363d, tileA: 0x2fd6c0, tileB: 0x21a898, nebula: 0x3dffd9 },
-  { bgTop: 0x170309, bgBottom: 0x40101f, tileA: 0xff6b6b, tileB: 0xd94f5c, nebula: 0xff7a59 },
+  { bgTop: 0x140c04, bgBottom: 0x3a2412, tileA: 0xf0a04b, tileB: 0xc97f30, nebula: 0xffb066 }, // asteroids
+  { bgTop: 0x021317, bgBottom: 0x07363d, tileA: 0x2fd6c0, tileB: 0x21a898, nebula: 0x3dffd9 }, // wind
+  { bgTop: 0x170309, bgBottom: 0x40101f, tileA: 0xff6b6b, tileB: 0xd94f5c, nebula: 0xff7a59 }, // boss
   { bgTop: 0x03140a, bgBottom: 0x0c3a1d, tileA: 0xb6ff3b, tileB: 0x8fd62a, nebula: 0xb6ff3b },
 ];
-// how big the UFO looks in each area: small and far at the start, closer every checkpoint
-const UFO_SCALE = [0.14, 0.2, 0.27, 0.45];
+// how big the UFO looks in each section: small and far at the start, closer every checkpoint
+const UFO_SCALE = [0.12, 0.17, 0.22, 0.28, 0.45];
 
 function mix(a, b, t) {
   const r = ((a >> 16) & 255) + ((((b >> 16) & 255) - ((a >> 16) & 255)) * t);
@@ -117,6 +120,9 @@ export class Level2Scene extends Phaser.Scene {
     this.duck = this.add.image(0, 0, 'duckRunA').setOrigin(0.5, 0.95).setDepth(6);
 
     this.makeHud();
+    // bread crumbs floating in the tunnel (one picture each, positioned every frame)
+    this.crumbItems = this.track.crumbs.map((c) => ({ ...c, got: false, img: this.add.image(0, 0, 'crumb').setDepth(5).setVisible(false) }));
+    this.crumbs = crumbHud(this, { total: this.crumbItems.length });
     this.spawn();
 
     this.input.keyboard.on('keydown-R', () => { if (!this.finished) this.spawn(); });
@@ -144,6 +150,8 @@ export class Level2Scene extends Phaser.Scene {
     this.lasers = [];
     this.bulletTimer = 1.5;
     this.laserTimer = 2.5;
+    this.rocks = [];
+    this.rockTimer = 1;
     unerase([this.duck]);
   }
 
@@ -171,8 +179,10 @@ export class Level2Scene extends Phaser.Scene {
 
     if (!this.finished && !p.dead) {
       this.movePlayer(dt, now);
-      this.updateBoss(dt, now);
-    } else if (this.finished) p.z += SPEEDS[3] * dt * 0.3; // slow jog after the finish
+      if (!p.dead) this.updateBoss(dt, now);
+      if (!p.dead) this.updateRocks(dt);
+      this.grabCrumbs();
+    } else if (this.finished) p.z += SPEEDS[SPEEDS.length - 1] * dt * 0.3; // slow jog after the finish
 
     // the tunnel turns so that whatever side Crumb is on becomes the floor
     const sideUnwrapped = Math.floor(p.u / LANES_PER_SIDE);
@@ -204,7 +214,7 @@ export class Level2Scene extends Phaser.Scene {
       if (under === HOLE) { p.grounded = false; p.offGroundTime = 0; p.vh = 0; }
       else if (under === PAD && this.boost < BOOST_TIME - 0.2) {
         this.boost = BOOST_TIME;
-        audio.sfx.jump();
+        audio.sfx.boost();
         this.showToast('BOOST!');
       } else if (under === CRACKED) this.startCrumble(Math.floor(p.z), laneOf(p.u), now);
     }
@@ -247,15 +257,16 @@ export class Level2Scene extends Phaser.Scene {
   }
 
   // Stepping on a cracked tile sets off the cracked tiles around it and just ahead: they fall soon after.
+  // (Only a few rows ahead, so if you keep running they collapse right behind you, not in front of you.)
   startCrumble(r, l, now) {
-    for (let rr = r; rr < r + 7; rr++) {
+    for (let rr = r; rr < r + 3; rr++) {
       const row = this.rows[rr];
       if (!row) break;
       for (let dl = -1; dl <= 1; dl++) {
         const ll = (l + dl + LANES) % LANES;
         const key = `${rr},${ll}`;
         if (row[ll] === CRACKED && !this.crumbling.has(key)) {
-          this.crumbling.set(key, now + CRUMBLE_DELAY + (rr - r) * 0.03);
+          this.crumbling.set(key, now + CRUMBLE_DELAY + (rr - r) * 0.04);
         }
       }
     }
@@ -294,6 +305,40 @@ export class Level2Scene extends Phaser.Scene {
       if (firing && L.lanes.includes(laneOf(p.u))) { this.die('Zapped!'); return; }
     }
     this.lasers = this.lasers.filter((L) => now < L.fireUntil);
+  }
+
+  // asteroids tumble down the tunnel towards Crumb in the asteroid section
+  updateRocks(dt) {
+    const p = this.player;
+    const zone = this.track.rockZones.find((r) => p.z > r.start - 4 && p.z < r.end);
+    if (zone && p.z < zone.end - 20) {
+      this.rockTimer -= dt;
+      if (this.rockTimer <= 0) {
+        this.rockTimer = ROCK_EVERY;
+        const lane = Math.floor(p.u) + Phaser.Math.Between(-3, 3);
+        this.rocks.push({ z: p.z + 36, u: lane + 0.5, spin: Math.random() * 6, size: Phaser.Math.FloatBetween(0.38, 0.5), seed: Math.random() });
+      }
+    }
+    for (const r of this.rocks) {
+      r.z -= ROCK_SPEED * dt;
+      r.spin += dt * 3;
+      if (Math.abs(r.z - p.z) < 0.5 && ringGap(r.u, p.u) < 0.75 && p.h < r.size * 2) { this.die('Smashed by an asteroid!'); return; }
+    }
+    this.rocks = this.rocks.filter((r) => r.z > p.z - 4);
+  }
+
+  // pick up bread crumbs you run (or jump) through
+  grabCrumbs() {
+    const p = this.player;
+    for (const c of this.crumbItems) {
+      if (c.got || Math.abs(c.z - p.z) > 0.6) continue;
+      // crumbs high in the air (h > 1) only get grabbed if you jump for them
+      if (ringGap(c.lane + 0.5, p.u) < 0.8 && Math.abs(c.h - 0.5 - Math.max(p.h, 0)) < 0.6) {
+        c.got = true;
+        c.img.setVisible(false);
+        this.crumbs.collect(c.img.x, c.img.y);
+      }
+    }
   }
 
   die(message) {
@@ -344,7 +389,7 @@ export class Level2Scene extends Phaser.Scene {
       n.setScale(n.polar.scale).setTint(col.nebula).setAlpha(0.5);
     });
     // stars drift outwards like you're flying past them
-    const speed = this.finished ? 2 : SPEEDS[Math.min(this.cpIndex, 3)] * (this.boost > 0 ? BOOST : 1);
+    const speed = this.finished ? 2 : SPEEDS[Math.min(this.cpIndex, SPEEDS.length - 1)] * (this.boost > 0 ? BOOST : 1);
     this.starGfx.clear();
     for (const s of this.stars) {
       s.r += s.r * dt * 0.02 * speed;
@@ -396,7 +441,7 @@ export class Level2Scene extends Phaser.Scene {
         if (type === HOLE) continue;
         const [a, b] = edges[l];
         let base = (r + l) % 2 ? col.tileA : col.tileB;
-        if (type === PAD) base = 0x3fae5a;
+        if (type === PAD) base = 0x1f4f86; // pond water under the lily pad
         if (type === CRACKED) base = mix(base, 0x2a1a10, 0.45);
         if (type === CRACKED && this.crumbling.has(`${r},${l}`)) base = flash ? 0xff3b3b : 0xffffff; // about to fall!
         if (isCp) base = 0x3ddc84;
@@ -405,11 +450,37 @@ export class Level2Scene extends Phaser.Scene {
         g.fillStyle(mix(base, col.bgBottom, fog * fog), 1);
         g.fillPoints([p1, p2, p3, p4], true);
         if (type === PAD) {
-          // a lighter round-ish lily pad in the middle of the tile
-          const cxp = (p1.x + p2.x + p3.x + p4.x) / 4, cyp = (p1.y + p2.y + p3.y + p4.y) / 4;
-          const shrink = (q) => ({ x: cxp + (q.x - cxp) * 0.6, y: cyp + (q.y - cyp) * 0.6 });
-          g.fillStyle(mix(0x8fe39c, col.bgBottom, fog * fog), 1);
-          g.fillPoints([shrink(p1), shrink(p2), shrink(p3), shrink(p4)], true);
+          // A round lily pad lying on the tile, with a notch cut out and a little pink flower.
+          // at(s, t) finds a point on the tile: s goes across (0..1), t goes along the tunnel (0..1)
+          const at = (s, t) => ({
+            x: (p1.x * (1 - s) + p2.x * s) * (1 - t) + (p4.x * (1 - s) + p3.x * s) * t,
+            y: (p1.y * (1 - s) + p2.y * s) * (1 - t) + (p4.y * (1 - s) + p3.y * s) * t,
+          });
+          const f2 = fog * fog;
+          const pad = [at(0.5, 0.5)]; // start at the centre so the notch is a wedge
+          for (let k = 0; k <= 14; k++) {
+            const a = 0.5 + (k / 14) * (Math.PI * 2 - 1); // leave a gap (the notch) near angle 0
+            pad.push(at(0.5 + Math.cos(a) * 0.44, 0.5 + Math.sin(a) * 0.44));
+          }
+          g.fillStyle(mix(0x2f9a4a, col.bgBottom, f2), 1); g.fillPoints(pad, true);
+          // lighter inner ring + veins
+          const inner = [at(0.5, 0.5)];
+          for (let k = 0; k <= 10; k++) {
+            const a = 0.5 + (k / 10) * (Math.PI * 2 - 1);
+            inner.push(at(0.5 + Math.cos(a) * 0.3, 0.5 + Math.sin(a) * 0.3));
+          }
+          g.fillStyle(mix(0x4cc26a, col.bgBottom, f2), 1); g.fillPoints(inner, true);
+          // the pink flower: petals around a yellow middle
+          if (fog < 0.85) {
+            const fc = at(0.36, 0.36);
+            const sz = Math.max(1.5, Math.abs(p2.x - p1.x) * 0.09);
+            g.fillStyle(mix(0xff7ac8, col.bgBottom, f2), 1);
+            for (let k = 0; k < 5; k++) {
+              const a = (k / 5) * Math.PI * 2;
+              g.fillCircle(fc.x + Math.cos(a) * sz, fc.y + Math.sin(a) * sz * 0.6, sz * 0.85);
+            }
+            g.fillStyle(mix(0xffe14d, col.bgBottom, f2), 1); g.fillCircle(fc.x, fc.y, sz * 0.6);
+          }
         } else if (type === CRACKED && fog < 0.8) {
           g.lineStyle(2, 0x1a0d08, 0.8 * (1 - fog));
           g.lineBetween(p1.x, p1.y, (p1.x + p3.x) / 2 + 3, (p1.y + p3.y) / 2);
@@ -422,32 +493,110 @@ export class Level2Scene extends Phaser.Scene {
     // --- lasers, bullets and wind streaks ---
     const fx = this.fx;
     fx.clear();
+    const mid = (A, B, t) => ({ x: A.x + (B.x - A.x) * t, y: A.y + (B.y - A.y) * t });
+    // --- LASERS: a warning stripe first, then the real beam ---
     for (const L of this.lasers) {
       const firing = now >= L.warnUntil;
+      const charge = firing ? 1 : 1 - (L.warnUntil - now) / LASER_WARN; // 0 -> 1 while warning
       for (const lane of L.lanes) {
         const [a, b] = edges[lane];
         const z0 = Math.max(p.z - 2, camZ + NEAR), z1 = p.z + 40;
         const q1 = proj(a.x, a.y, z0), q2 = proj(b.x, b.y, z0), q3 = proj(b.x, b.y, z1), q4 = proj(a.x, a.y, z1);
         if (!firing) {
-          fx.fillStyle(0xff2040, flash ? 0.45 : 0.18);
+          // see-through red stripe that flashes faster as the laser charges up
+          const blink = Math.floor(time / (140 - charge * 100)) % 2 === 0;
+          fx.fillStyle(0xff2040, blink ? 0.35 + charge * 0.25 : 0.12);
           fx.fillPoints([q1, q2, q3, q4], true);
+          // dashed edges
+          fx.lineStyle(3, 0xffffff, 0.7);
+          for (let d = 0; d < 1; d += 0.1) {
+            const e0 = mid(q1, q4, d), e1 = mid(q1, q4, d + 0.05);
+            const f0 = mid(q2, q3, d), f1 = mid(q2, q3, d + 0.05);
+            fx.lineBetween(e0.x, e0.y, e1.x, e1.y); fx.lineBetween(f0.x, f0.y, f1.x, f1.y);
+          }
+          // "!" warning markers along the lane
+          for (const d of [0.04, 0.12, 0.25]) {
+            const m = mid(mid(q1, q2, 0.5), mid(q4, q3, 0.5), d);
+            const sz = Math.max(4, Math.abs(q2.x - q1.x) * (0.3 - d * 0.6));
+            fx.fillStyle(0xffffff, blink ? 1 : 0.5);
+            fx.fillRect(m.x - sz * 0.12, m.y - sz, sz * 0.24, sz * 0.7);
+            fx.fillCircle(m.x, m.y + sz * 0.15, sz * 0.13);
+          }
         } else {
-          fx.fillStyle(0xff4060, 0.55); fx.fillPoints([q1, q2, q3, q4], true);
-          // bright core of the beam
-          const mid = (A, B, t) => ({ x: A.x + (B.x - A.x) * t, y: A.y + (B.y - A.y) * t });
-          fx.fillStyle(0xffffff, 0.9);
-          fx.fillPoints([mid(q1, q2, 0.35), mid(q1, q2, 0.65), mid(q4, q3, 0.65), mid(q4, q3, 0.35)], true);
+          // the beam: wide red glow, pink middle, flickering white-hot core
+          const flick = 0.85 + Math.random() * 0.15;
+          fx.fillStyle(0xff2040, 0.35); fx.fillPoints([mid(q1, q2, -0.15), mid(q1, q2, 1.15), mid(q4, q3, 1.15), mid(q4, q3, -0.15)], true);
+          fx.fillStyle(0xff4f8a, 0.75); fx.fillPoints([q1, q2, q3, q4], true);
+          fx.fillStyle(0xffffff, flick);
+          fx.fillPoints([mid(q1, q2, 0.3), mid(q1, q2, 0.7), mid(q4, q3, 0.7), mid(q4, q3, 0.3)], true);
+          // sparks flying off the beam
+          fx.fillStyle(0xffe14d, 1);
+          for (let k = 0; k < 6; k++) {
+            const m = mid(mid(q1, q2, Math.random()), mid(q4, q3, Math.random()), Math.random() * 0.3);
+            fx.fillRect(m.x, m.y, 3, 3);
+          }
         }
       }
+      // the UFO glows brighter while it charges
+      if (!firing) {
+        fx.fillStyle(0xff3060, 0.15 + charge * 0.35);
+        fx.fillCircle(this.ufo.x, this.ufo.y + 20 * this.ufo.scale, (20 + charge * 40) * this.ufo.scale * 2);
+        fx.fillStyle(0xffffff, charge * 0.8);
+        fx.fillCircle(this.ufo.x, this.ufo.y + 20 * this.ufo.scale, 8 * charge * this.ufo.scale * 2);
+      }
     }
+    // --- BULLETS: glowing plasma orbs with spinning spikes and a fading trail ---
     for (const b of this.bullets) {
       if (b.z - camZ < NEAR + 0.2) continue;
-      const pt = rot(wallPoint(b.u, 0.45));
-      const s = proj(pt.x, pt.y, b.z);
-      const r = (0.28 * FOCAL) / (b.z - camZ);
-      fx.fillStyle(0xff3b8a, 0.5); fx.fillCircle(s.x, s.y, r * 1.6);
-      fx.fillStyle(0xff6bb0, 1); fx.fillCircle(s.x, s.y, r);
-      fx.fillStyle(0xffffff, 1); fx.fillCircle(s.x, s.y, r * 0.45);
+      for (let k = 3; k >= 0; k--) {
+        const tz = b.z + k * 0.6; // trail behind it (further away)
+        const pt = rot(wallPoint(b.u, 0.45));
+        const s = proj(pt.x, pt.y, tz);
+        const r = (0.28 * FOCAL) / (tz - camZ);
+        if (k > 0) { fx.fillStyle(0xff3b8a, 0.25 - k * 0.05); fx.fillCircle(s.x, s.y, r * (1 - k * 0.15)); continue; }
+        fx.fillStyle(0xff3b8a, 0.35); fx.fillCircle(s.x, s.y, r * 1.9);
+        // spikes
+        const spin = time / 120;
+        fx.fillStyle(0xffd0e8, 0.9);
+        for (let j = 0; j < 4; j++) {
+          const a = spin + (j * Math.PI) / 2;
+          fx.fillTriangle(
+            s.x + Math.cos(a) * r * 1.6, s.y + Math.sin(a) * r * 1.6,
+            s.x + Math.cos(a + 0.5) * r * 0.7, s.y + Math.sin(a + 0.5) * r * 0.7,
+            s.x + Math.cos(a - 0.5) * r * 0.7, s.y + Math.sin(a - 0.5) * r * 0.7,
+          );
+        }
+        fx.fillStyle(0xff6bb0, 1); fx.fillCircle(s.x, s.y, r);
+        fx.fillStyle(0xffffff, 1); fx.fillCircle(s.x - r * 0.15, s.y - r * 0.15, r * 0.45);
+      }
+    }
+    // --- ASTEROIDS: lumpy spinning space rocks ---
+    for (const r of this.rocks) {
+      if (r.z - camZ < NEAR + 0.3) continue;
+      const pt = rot(wallPoint(r.u, r.size));
+      const s = proj(pt.x, pt.y, r.z);
+      const rad = (r.size * FOCAL) / (r.z - camZ);
+      const shape = [];
+      for (let k = 0; k < 9; k++) {
+        const a = r.spin + (k / 9) * Math.PI * 2;
+        const bump = 0.8 + 0.2 * Math.sin(k * 2.7 + r.seed * 10);
+        shape.push({ x: s.x + Math.cos(a) * rad * bump, y: s.y + Math.sin(a) * rad * bump });
+      }
+      fx.fillStyle(0x000000, 0.3); fx.fillEllipse(s.x, s.y + rad * 1.05, rad * 1.6, rad * 0.4);
+      fx.fillStyle(0x7a6a5c, 1); fx.fillPoints(shape, true);
+      fx.fillStyle(0x5a4c40, 1);
+      fx.fillCircle(s.x + Math.cos(r.spin) * rad * 0.35, s.y + Math.sin(r.spin) * rad * 0.35, rad * 0.22);
+      fx.fillCircle(s.x + Math.cos(r.spin + 2.5) * rad * 0.4, s.y + Math.sin(r.spin + 2.5) * rad * 0.4, rad * 0.15);
+      fx.fillStyle(0xa8988a, 1); fx.fillCircle(s.x - rad * 0.3, s.y - rad * 0.35, rad * 0.18);
+    }
+    // --- BREAD CRUMBS floating in the tunnel ---
+    for (const c of this.crumbItems) {
+      const show = !c.got && c.z > camZ + 1 && c.z < camZ + VIEW_ROWS * 0.7;
+      c.img.setVisible(show);
+      if (!show) continue;
+      const pt = rot(wallPoint(c.lane + 0.5, c.h + Math.sin(time / 250 + c.z) * 0.08));
+      const s = proj(pt.x, pt.y, c.z);
+      c.img.setPosition(s.x, s.y).setScale((0.55 * FOCAL) / (c.z - camZ) / 40).setAngle(Math.sin(time / 300 + c.z) * 15);
     }
     const wind = this.windAt(p.z);
     if (wind && !this.finished) {
@@ -466,7 +615,7 @@ export class Level2Scene extends Phaser.Scene {
       const scale = (0.95 * FOCAL) / dzP / 80; // Crumb is about 0.95 lanes tall; picture is 80px
       let frame = 'duckJump';
       if (p.grounded) {
-        this.runAnim += dt * SPEEDS[Math.min(this.cpIndex, 3)] * 0.9;
+        this.runAnim += dt * SPEEDS[Math.min(this.cpIndex, SPEEDS.length - 1)] * 0.9;
         frame = Math.floor(this.runAnim) % 2 ? 'duckRunA' : 'duckRunB';
       }
       const sideRoll = this.roll - this.targetRoll; // tilt with the tunnel while it is turning
@@ -544,6 +693,7 @@ export class Level2Scene extends Phaser.Scene {
     levelCompletePanel(this, {
       title: 'Level 2 complete!', secs: this.elapsed / 1000, limits: STAR_LIMITS, levelKey: 'level2',
       line: 'Crumb caught the UFO... but who is flying it?',
+      crumbs: { got: this.crumbs.got, total: this.crumbs.total },
       onDone: () => this.scene.start('Cutscene', { id: 'ending', next: 'Menu' }),
     });
   }

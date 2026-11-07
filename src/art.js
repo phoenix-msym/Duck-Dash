@@ -42,6 +42,7 @@ export function makeTextures(scene) {
   makePigeon(scene);
   makeCrumbPickup(scene);
   makeBoostPad(scene);
+  makeVignette(scene);
   makeEarth(scene);
   makeEgg(scene);
   makeDuckling(scene);
@@ -83,6 +84,18 @@ function makeCrumbPickup(scene) {
   g.fillStyle(0xe8a95a); g.fillRoundedRect(10, 11, 20, 13, 6);
   g.fillStyle(0xfff0c2); g.fillCircle(15, 15, 2.5);
   g.generateTexture('crumb', 40, 40);
+  g.destroy();
+}
+
+// dark soft edges around the screen, for a "movie" look in cutscenes
+function makeVignette(scene) {
+  const W = 1280, H = 720;
+  const g = scene.make.graphics({ add: false });
+  for (let i = 0; i < 40; i++) {
+    g.lineStyle(10, 0x000000, 0.035);
+    g.strokeRoundedRect(-60 + i * 4, -60 + i * 4, W + 120 - i * 8, H + 120 - i * 8, 120);
+  }
+  g.generateTexture('vignette', W, H);
   g.destroy();
 }
 
@@ -180,7 +193,9 @@ function makeMountains(scene) {
 
 // Crumb standing, side view, facing right (for cutscenes). Feet at the bottom middle.
 function makeDuckStand(scene) {
+  const L = look();
   const g = scene.make.graphics({ add: false });
+  g.translateCanvas(0, 16); // leave room above the head for a hat (feet stay at the bottom)
   // legs + feet
   g.lineStyle(4, ORANGE);
   g.beginPath(); g.moveTo(32, 54); g.lineTo(32, 70); g.strokePath();
@@ -193,7 +208,7 @@ function makeDuckStand(scene) {
   // wing
   g.fillStyle(YELLOW_DARK); g.fillEllipse(32, 44, 26, 14);
   // scarf
-  g.fillStyle(SCARF); g.fillRoundedRect(44, 26, 18, 7, 3); g.fillTriangle(46, 28, 30, 24, 34, 34);
+  g.fillStyle(L.scarf); g.fillRoundedRect(44, 26, 18, 7, 3); g.fillTriangle(46, 28, 30, 24, 34, 34);
   // head
   g.fillStyle(YELLOW); g.fillCircle(54, 18, 13);
   g.fillTriangle(48, 8, 50, 0, 54, 7);
@@ -203,7 +218,8 @@ function makeDuckStand(scene) {
   // eye
   g.fillStyle(0x1a1a1a); g.fillCircle(58, 15, 2.8);
   g.fillStyle(0xffffff); g.fillCircle(59, 14, 1);
-  g.generateTexture('duckStand', 80, 78);
+  drawHat(g, L.hat, 53, 7, 1, true);
+  g.generateTexture('duckStand', 80, 94);
   g.destroy();
 }
 
@@ -254,7 +270,9 @@ function makeEarth(scene) {
 
 // Crumb seen from behind, for the space tunnel level. pose: 0/1 = running steps, 2 = jumping
 function makeDuckBack(scene, key, pose) {
+  const L = look();
   const g = scene.make.graphics({ add: false });
+  g.translateCanvas(0, 14); // room for a hat
   // feet
   g.fillStyle(ORANGE);
   const leftFootY = pose === 0 ? 74 : 68, rightFootY = pose === 1 ? 74 : 68;
@@ -279,11 +297,12 @@ function makeDuckBack(scene, key, pose) {
   // beak tips peeking out on both sides
   g.fillStyle(ORANGE); g.fillEllipse(18, 24, 6, 4); g.fillEllipse(46, 24, 6, 4);
   // scarf with a tail flapping out to the side
-  g.fillStyle(SCARF);
+  g.fillStyle(L.scarf);
   g.fillRoundedRect(18, 30, 28, 7, 3);
   const flap = pose === 1 ? 4 : -2;
   g.fillTriangle(40, 32, 60, 26 + flap, 58, 36 + flap);
-  g.generateTexture(key, 64, 80);
+  drawHat(g, L.hat, 32, 8, 1, false);
+  g.generateTexture(key, 64, 94);
   g.destroy();
 }
 
@@ -299,28 +318,29 @@ function makeGlow(scene) {
 // The wheels are separate sprites so they can spin.
 // Also makes 'bikeEmpty': the same bike with nobody on it (for cutscenes).
 function makeBike(scene) {
+  const L = look();
   const empty = scene.make.graphics({ add: false });
-  drawBikeFrame(empty);
+  drawBikeFrame(empty, L);
   empty.generateTexture('bikeEmpty', 120, 100);
   empty.destroy();
 
   const g = scene.make.graphics({ add: false });
 
   // scarf trailing behind (drawn first so it's behind the duck)
-  g.fillStyle(SCARF);
+  g.fillStyle(L.scarf);
   g.fillTriangle(62, 34, 30, 30, 34, 40);
   g.fillTriangle(34, 30, 22, 26, 26, 36);
 
-  drawBikeFrame(g);
-  drawRider(g);
+  drawBikeFrame(g, L);
+  drawRider(g, L);
   g.generateTexture('bike', 120, 100);
   g.destroy();
 }
 
-function drawBikeFrame(g) {
-  g.lineStyle(6, 0x2e9cca);
+function drawBikeFrame(g, L) {
+  g.lineStyle(6, L.bike[0]);
   g.beginPath(); g.moveTo(30, 80); g.lineTo(48, 58); g.lineTo(84, 52); g.lineTo(90, 80); g.strokePath();
-  g.lineStyle(5, 0x22779b);
+  g.lineStyle(5, L.bike[1]);
   g.beginPath(); g.moveTo(48, 58); g.lineTo(62, 76); g.lineTo(30, 80); g.strokePath();
   // engine
   g.fillStyle(0x555b66); g.fillRoundedRect(50, 62, 24, 14, 3);
@@ -333,7 +353,7 @@ function drawBikeFrame(g) {
   g.beginPath(); g.moveTo(84, 52); g.lineTo(90, 38); g.strokePath();
 }
 
-function drawRider(g) {
+function drawRider(g, L) {
   // duck leg to the foot peg
   g.lineStyle(4, ORANGE);
   g.beginPath(); g.moveTo(54, 50); g.lineTo(60, 66); g.lineTo(66, 66); g.strokePath();
@@ -346,7 +366,7 @@ function drawRider(g) {
   g.lineStyle(7, YELLOW_DARK);
   g.beginPath(); g.moveTo(58, 40); g.lineTo(88, 39); g.strokePath();
   // scarf knot
-  g.fillStyle(SCARF); g.fillRoundedRect(60, 30, 14, 7, 3);
+  g.fillStyle(L.scarf); g.fillRoundedRect(60, 30, 14, 7, 3);
 
   // head
   g.fillStyle(YELLOW); g.fillCircle(70, 24, 11);
@@ -360,6 +380,7 @@ function drawRider(g) {
   g.beginPath(); g.moveTo(70, 16); g.lineTo(77, 18); g.strokePath();
   // tiny head feather
   g.fillStyle(YELLOW); g.fillTriangle(64, 15, 66, 8, 69, 14);
+  drawHat(g, L.hat, 70, 15, 0.75, true);
 }
 
 function makeWheel(scene) {

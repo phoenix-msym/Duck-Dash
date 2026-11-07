@@ -1,5 +1,6 @@
 // Small helpers for buttons and the sunset background used on menu screens.
 import { audio } from './audio.js';
+import { wallet } from './wallet.js';
 
 // ------------------------------------------------------------------ "erase" effect when Crumb dies
 // The picture wipes away from the top down, and little yellow bits fly off the wiping edge.
@@ -35,6 +36,35 @@ export function unerase(sprites) {
   sprites.forEach((s) => { s.setCrop(); s.setAlpha(1); s.setVisible(true); });
 }
 
+// ------------------------------------------------------------------ bread crumbs
+// The little "🍞 x 12" counter under the timer. Call .collect(x, y) when Crumb grabs one.
+export function crumbHud(scene, { fixed = false, total = 0 } = {}) {
+  const icon = scene.add.image(34, 92, 'crumb').setDepth(50).setScale(0.9);
+  const text = scene.add.text(56, 80, '', {
+    fontFamily: FONT, fontSize: '22px', color: '#ffe680', stroke: '#3b1d4a', strokeThickness: 5,
+  }).setDepth(50);
+  if (fixed) { icon.setScrollFactor(0); text.setScrollFactor(0); }
+  const hud = {
+    got: 0, total,
+    draw() { text.setText(`${hud.got} / ${hud.total}`); },
+    // x, y = where it was grabbed (in the same space as the HUD if fixed=false, world space if a scrolling level)
+    collect(x, y, worldSpace = false) {
+      hud.got++;
+      hud.draw();
+      wallet.add(1);
+      audio.sfx.crumb();
+      scene.tweens.add({ targets: icon, scale: { from: 1.4, to: 0.9 }, duration: 250, ease: 'Back.out' });
+      const plus = scene.add.text(x, y, '+1', {
+        fontFamily: FONT, fontSize: '26px', fontStyle: 'bold', color: '#ffe680', stroke: '#3b1d4a', strokeThickness: 5,
+      }).setOrigin(0.5).setDepth(40);
+      if (!worldSpace && fixed) plus.setScrollFactor(0);
+      scene.tweens.add({ targets: plus, y: y - 50, alpha: 0, duration: 700, onComplete: () => plus.destroy() });
+    },
+  };
+  hud.draw();
+  return hud;
+}
+
 // ------------------------------------------------------------------ star rating
 // Faster time = more stars. limits = [seconds for 3 stars, seconds for 2 stars].
 export function starsForTime(secs, limits) {
@@ -56,7 +86,7 @@ export const fmtTime = (secs) => `${Math.floor(secs / 60)}:${(secs % 60).toFixed
 
 // The end-of-level panel: title, time, stars popping in one by one, then it moves on by itself.
 // Space / Enter / click skips the wait. onDone runs when it's time to go to the next scene.
-export function levelCompletePanel(scene, { title, secs, limits, levelKey, line, onDone, fixed = false, wait = 4200 }) {
+export function levelCompletePanel(scene, { title, secs, limits, levelKey, line, onDone, fixed = false, wait = 4200, crumbs = null }) {
   const { width: W, height: H } = scene.scale;
   const stars = starsForTime(secs, limits);
   const { best, newRecord } = saveBest(levelKey, stars, secs);
@@ -79,10 +109,11 @@ export function levelCompletePanel(scene, { title, secs, limits, levelKey, line,
       });
     }
   }
-  add(scene.add.text(W / 2, H / 2 + 50,
-    `Time: ${fmtTime(secs)}${newRecord ? '   NEW BEST!' : ''}\n3 stars: under ${fmtTime(limits[0])}   ·   best: ${fmtTime(best.secs)}`,
-    { ...style, fontSize: '24px' }).setOrigin(0.5).setDepth(61));
-  add(scene.add.text(W / 2, H / 2 + 125, line, { ...style, fontSize: '24px', color: '#ffd23f', fontStyle: 'italic' }).setOrigin(0.5).setDepth(61));
+  const crumbLine = crumbs ? `\nBread crumbs: ${crumbs.got} / ${crumbs.total}   ·   in your bag: ${wallet.crumbs}` : '';
+  add(scene.add.text(W / 2, H / 2 + 55,
+    `Time: ${fmtTime(secs)}${newRecord ? '   NEW BEST!' : ''}\n3 stars: under ${fmtTime(limits[0])}   ·   best: ${fmtTime(best.secs)}${crumbLine}`,
+    { ...style, fontSize: '22px', lineSpacing: 4 }).setOrigin(0.5).setDepth(61));
+  add(scene.add.text(W / 2, H / 2 + 135, line, { ...style, fontSize: '24px', color: '#ffd23f', fontStyle: 'italic' }).setOrigin(0.5).setDepth(61));
   const hint = add(scene.add.text(W / 2, H / 2 + 180, 'Space = continue', { ...style, fontSize: '18px' }).setOrigin(0.5).setDepth(61).setAlpha(0.7));
   scene.tweens.add({ targets: hint, alpha: 0.3, duration: 500, yoyo: true, repeat: -1 });
 

@@ -4,6 +4,7 @@ import { Level1Scene } from './scenes/Level1Scene.js';
 import { Level2Scene } from './scenes/Level2Scene.js';
 import { CutsceneScene } from './scenes/CutsceneScene.js';
 import { PauseScene } from './scenes/PauseScene.js';
+import { ShopScene } from './scenes/ShopScene.js';
 import { reconnectGyro } from './gyro.js';
 
 const game = new Phaser.Game({
@@ -17,7 +18,7 @@ const game = new Phaser.Game({
     default: 'matter',
     matter: { gravity: { y: 1 }, positionIterations: 8, velocityIterations: 6, debug: false },
   },
-  scene: [MenuScene, SettingsScene, Level1Scene, Level2Scene, CutsceneScene, PauseScene],
+  scene: [MenuScene, SettingsScene, Level1Scene, Level2Scene, CutsceneScene, PauseScene, ShopScene],
 });
 
 // Testing shortcuts:

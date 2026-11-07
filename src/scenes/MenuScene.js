@@ -1,6 +1,7 @@
 import { makeTextures } from '../art.js';
 import { makeButton, keyboardMenu, sunsetBackdrop, FONT } from '../ui.js';
 import { audio } from '../audio.js';
+import { wallet } from '../wallet.js';
 
 export class MenuScene extends Phaser.Scene {
   constructor() { super('Menu'); }
@@ -46,8 +47,9 @@ export class MenuScene extends Phaser.Scene {
     this.tweens.add({ targets: crumb, y: bikeY - 6, duration: 300, yoyo: true, repeat: -1, ease: 'Sine.inOut' });
 
     const buttons = [
-      makeButton(this, W / 2, 360, 'Play', () => this.scene.start('Cutscene', { id: 'intro', next: 'Level1' })),
-      makeButton(this, W / 2, 450, 'Settings', () => this.scene.start('Settings')),
+      makeButton(this, W / 2, 330, 'Play', () => this.scene.start('Cutscene', { id: 'intro', next: 'Level1' })),
+      makeButton(this, W / 2, 410, `Bread Shop  (${wallet.crumbs})`, () => this.scene.start('Shop')),
+      makeButton(this, W / 2, 490, 'Settings', () => this.scene.start('Settings')),
     ];
     keyboardMenu(this, buttons);
 

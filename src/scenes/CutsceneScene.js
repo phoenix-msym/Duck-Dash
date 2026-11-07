@@ -34,7 +34,10 @@ export class CutsceneScene extends Phaser.Scene {
     this.uiObjects = new Set();
     this.uiCam = this.cameras.add(0, 0, W0, H0);
     this.events.on('postupdate', () => this.sortCameras());
+    this.actors = {};    // who to bounce when they talk: { Crumb: sprite, Pigeon: sprite, ... }
+    this.shadows = [];   // [{ obj, shadow }] soft shadows that follow characters
     this.makeDialogueBox();
+    this.cinematic();
 
     const advance = () => { if (this.onAdvance) this.onAdvance(); };
     this.input.keyboard.on('keydown-SPACE', advance);
@@ -75,6 +78,38 @@ export class CutsceneScene extends Phaser.Scene {
     for (const obj of this.children.list) {
       if (!this.uiObjects.has(obj) && !obj.__worldOnly) { this.uiCam.ignore(obj); obj.__worldOnly = true; }
     }
+    // shadows follow their characters along the ground
+    for (const s of this.shadows) {
+      if (!s.obj.active) { s.shadow.setVisible(false); continue; }
+      s.shadow.setVisible(s.obj.visible).setPosition(s.obj.x, s.groundY + 2);
+      const lift = Math.max(0, s.groundY - s.obj.y);            // higher up = smaller, fainter shadow
+      s.shadow.setScale(Math.max(0.3, 1 - lift / 300)).setAlpha(Math.max(0, 0.35 - lift / 900) * s.obj.alpha);
+    }
+  }
+
+  // "movie" look: black bars slide in at the top and bottom, plus soft dark corners
+  cinematic() {
+    const { width: W, height: H } = this.scale;
+    this.ui(this.add.image(W / 2, H / 2, 'vignette').setDepth(87).setAlpha(0.8));
+    const top = this.ui(this.add.rectangle(W / 2, -24, W, 48, 0x000000).setDepth(88));
+    const bottom = this.ui(this.add.rectangle(W / 2, H + 24, W, 48, 0x000000).setDepth(88));
+    this.tweens.add({ targets: top, y: 24, duration: 600, ease: 'Cubic.out' });
+    this.tweens.add({ targets: bottom, y: H - 24, duration: 600, ease: 'Cubic.out' });
+  }
+
+  // a soft shadow under a character standing on the ground at groundY
+  addShadow(obj, groundY, width = 70) {
+    const shadow = this.add.ellipse(obj.x, groundY + 2, width, 14, 0x000000, 0.35).setDepth((obj.depth || 10) - 1);
+    this.shadows.push({ obj, shadow, groundY });
+    return shadow;
+  }
+
+  // little bounce on whoever is talking
+  bounceSpeaker(name) {
+    const who = this.actors[name];
+    if (!who || !who.active || !who.visible) return;
+    const sx = who.scaleX, sy = who.scaleY;
+    this.tweens.add({ targets: who, scaleY: sy * 1.08, scaleX: sx * 0.95, duration: 110, yoyo: true, ease: 'Quad.out' });
   }
 
   // zoom the world camera in on a spot (the speech box stays normal size)
@@ -177,6 +212,10 @@ export class CutsceneScene extends Phaser.Scene {
   character(key, x, y, scale = 1.6, flip = false) {
     const c = this.img(key, x, y, { origin: [0.5, 1], scale, depth: 10 }).setFlipX(flip);
     this.tweens.add({ targets: c, scaleY: scale * 0.96, duration: 600, yoyo: true, repeat: -1, ease: 'Sine.inOut' });
+    // y is the ground they stand on: give them a shadow, and remember who they are so they bounce when talking
+    this.addShadow(c, y, 46 * scale);
+    const names = { duckStand: 'Crumb', pigeon: 'Pigeon', duckling: 'Duckling' };
+    if (names[key]) this.actors[names[key]] = c;
     return c;
   }
 
@@ -197,6 +236,7 @@ export class CutsceneScene extends Phaser.Scene {
   ufo(x, y, scale = 1.4) {
     const u = this.img('ufo', x, y, { scale, depth: 8 });
     u.bob = { stop() {} }; // no hovering until we call hover(), so it doesn't fight with move()
+    this.actors['???'] = u;
     return u;
   }
 
@@ -265,6 +305,7 @@ export class CutsceneScene extends Phaser.Scene {
     const colors = { Crumb: '#ffd23f', '???': '#b6ff3b', Pigeon: '#b8bccb', Duckling: '#ffe680', '': '#fff4dc' };
     this.box.setVisible(true);
     this.nameTag.setText(name).setVisible(!!name).setBackgroundColor(colors[name] || '#ffd23f');
+    this.bounceSpeaker(name);
     this.lineText.setText('');
     this.arrow.setVisible(false);
     let shown = 0;
@@ -385,6 +426,8 @@ async function middle(c) {
   const egg = c.img('egg', 1040, 278, { depth: 8 });
   c.tweens.add({ targets: egg, y: 268, duration: 900, yoyo: true, repeat: -1, ease: 'Sine.inOut' });
   const bike = c.bike(-150, ground - 50, true, 1.4); // wheels resting on the grass
+  c.actors.Crumb = bike;
+  c.addShadow(bike, ground, 110);
   bike.spin(true);
   audio.sfx.whoosh();
   await c.move(bike, { x: 280 }, 1200, 'Quad.out');
@@ -426,7 +469,10 @@ async function middle(c) {
   await c.flash(200, 150, 600, () => {
     c.tweens.killAll();
     c.children.removeAll(true);
+    c.shadows = [];
+    c.actors = {};
     c.makeDialogueBox();
+    c.cinematic();
     c.spaceBackdrop();
     earth = c.img('earth', 260, H + 40, { scale: 1.5, depth: 1 });
     // fast-moving star streaks so it feels like a chase
@@ -459,6 +505,8 @@ async function middle(c) {
   c.move(floaty, { x: -150, y: 80, angle: -300, scale: 1 }, 2200, 'Sine.out');
   await c.move(crumb, { x: 330, y: roadY, scale: 1.5, angle: 360 }, 700, 'Quad.in');
   crumb.setAngle(0);
+  c.actors.Crumb = crumb;
+  c.addShadow(crumb, roadY, 70);
   audio.sfx.land();
   c.move(backPortal, { scale: 0 }, 500);
   // running: a quick bob up and down
@@ -593,6 +641,8 @@ async function ending(c) {
   // the hatch pops open... smoke... a figure steps out
   const flash = c.ui(c.add.rectangle(W / 2, H / 2, W, H, 0xffffff, 0).setDepth(80));
   const pigeon = c.img('pigeon', 760, ground, { origin: [0.5, 1], scale: 1.7, depth: 9 }).setAlpha(0).setTint(0x000000);
+  c.actors.Pigeon = pigeon;
+  c.addShadow(pigeon, ground, 75);
   await c.move(pigeon, { alpha: 1, x: 640 }, 900);
   await c.say('???', '...');
   audio.sfx.reveal();
