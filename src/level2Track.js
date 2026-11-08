@@ -96,16 +96,16 @@ export function buildLevel2() {
   rest(14);
   make(20, (l) => side(l) === 0 || side(l) === 2);
   rest(14);
-  holes(14, 0.12);
+  holes(14, 0.05); // only a few holes: this part is played with a joystick!
   rest(12);
 
   // ---------------- Section 4: WIND ----------------
   checkpoint();
   hint('WIND ahead! Lean against it!');
   rest(14);
-  windZone(+1, () => { crumbTrail(4, 5, 0, 0.5); holes(22, 0.12); });
+  windZone(+1, () => { crumbTrail(4, 5, 0, 0.5); holes(22, 0.04); }); // very few holes while the wind pushes you
   rest(14);
-  windZone(-1, () => narrowPath(0));
+  windZone(-1, () => narrowPath(0, 3)); // a wide path (7 lanes) instead of a thin one
   rest(14);
   windZone(+1, () => { full(6); jumpGap(1); full(8); });
   rest(10);
@@ -114,17 +114,14 @@ export function buildLevel2() {
   checkpoint();
   const bossStart = rows.length;
   hint('BOSS FIGHT! Dodge the blasts and the lasers!');
+  // (kept easy on purpose: you're dodging the UFO's shots with a gyro at the same time)
   rest(16);
   crumbTrail(2, 5, 3, 0.5);
-  holes(18, 0.1);
-  rest(14);
-  make(16, (l) => side(l) !== 2);
-  rest(14);
+  holes(18, 0.04);
+  rest(18);
   crumbTrail(0, 4, 10, 0.5);
-  holes(16, 0.12);
-  rest(14);
-  crackedPatch(10);
-  rest(14);
+  holes(16, 0.04);
+  rest(18);
   const bossEnd = rows.length;
   hint('You caught up to the UFO!');
   full(46);
@@ -180,9 +177,9 @@ export function buildLevel2() {
     make(count, () => (rand() < 0.7 ? CRACKED : rand() < 0.15 ? false : TILE));
   }
 
-  function narrowPath(difficulty) {
+  // width = how many lanes on each side of the middle stay open (1 = a 3-lane path)
+  function narrowPath(difficulty, width = 1) {
     let centre = Math.floor(rand() * LANES);
-    const width = 1;
     const len = 22 + difficulty * 4;
     const closeIn = 14;
     for (let i = 0; i < closeIn + len; i++) {

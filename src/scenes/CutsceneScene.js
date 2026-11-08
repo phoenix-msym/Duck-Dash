@@ -730,12 +730,19 @@ async function ending(c) {
   c.zoomTo(1, W / 2, H / 2, 1500);
   c.move(earth, { scale: 1.4, x: W / 2, y: 220 }, 3000);
   await c.wait(800);
-  const end1 = c.ui(c.add.text(W / 2, 120, 'THE END', {
+  // The ending card sits in the MIDDLE of the screen, and the "press Space" hint at the bottom,
+  // so nothing overlaps the speech box at the top.
+  const end1 = c.ui(c.add.text(W / 2, H / 2 - 20, 'THE END', {
     fontFamily: FONT, fontSize: '84px', fontStyle: 'bold', color: '#fff4dc', stroke: '#3b1d4a', strokeThickness: 12,
   }).setOrigin(0.5).setDepth(96).setAlpha(0));
-  const end2 = c.ui(c.add.text(W / 2, 200, 'Thanks for playing Duck Dash!', {
-    fontFamily: FONT, fontSize: '32px', color: '#ffd23f',
+  const end2 = c.ui(c.add.text(W / 2, H / 2 + 60, 'Thanks for playing Duck Dash!', {
+    fontFamily: FONT, fontSize: '32px', color: '#ffd23f', stroke: '#3b1d4a', strokeThickness: 6,
   }).setOrigin(0.5).setDepth(96).setAlpha(0));
   await c.move([end1, end2], { alpha: 1 }, 1200);
-  await c.say('', 'Press Space to go back to the menu.');
+  const hint = c.ui(c.add.text(W / 2, H - 80, 'Press Space to go back to the menu', {
+    fontFamily: FONT, fontSize: '22px', color: '#fff4dc', stroke: '#3b1d4a', strokeThickness: 5,
+  }).setOrigin(0.5).setDepth(96).setAlpha(0));
+  c.tweens.add({ targets: hint, alpha: { from: 0.3, to: 1 }, duration: 700, yoyo: true, repeat: -1 });
+  // wait for Space / Enter / click without opening a speech box
+  await new Promise((resolve) => { c.onAdvance = () => { c.onAdvance = null; c.stillPlaying(resolve)(); }; });
 }

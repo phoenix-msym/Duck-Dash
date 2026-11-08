@@ -495,6 +495,9 @@ export class Level1Scene extends Phaser.Scene {
 
   finish() {
     this.finished = true;
+    // clear any pop-up message (FLIP!, BOOST!...) so it doesn't overlap the finish panel
+    this.tweens.killTweensOf(this.toast);
+    this.toast.setAlpha(0);
     audio.engineStop();
     audio.sfx.finish();
     audio.sfx.whoosh();

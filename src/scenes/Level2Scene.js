@@ -9,7 +9,7 @@ import { addPauseButton } from './PauseScene.js';
 import { level2Scenery } from '../scenery.js';
 
 // ---- Runner tuning ----
-const SPEEDS = [9, 9.8, 10.4, 10.8, 11.2]; // rows per second in each section (basics, holes, wall run, wind, boss)
+const SPEEDS = [9, 9.8, 10.4, 10.8, 10.2]; // rows per second in each section (basics, holes, wall run, wind, boss)
 const SIDE_SPEED = 8.5;   // lanes per second when holding A / D
 const JUMP_POWER = 10.2;
 const GRAVITY = 34.6;
@@ -18,16 +18,16 @@ const COYOTE_TIME = 0.12; // seconds you can still jump after running off an edg
 const BOOST = 1.6;        // lily pad speed multiplier
 const BOOST_TIME = 1.2;   // seconds a lily pad boost lasts
 const CRUMBLE_DELAY = 0.35;// seconds before a touched cracked tile falls
-const WIND = 2.4;         // lanes per second the wind pushes you
+const WIND = 2.0;         // lanes per second the wind pushes you
 const STAR_LIMITS = [75, 100]; // seconds: under the first = 3 stars, under the second = 2 stars
 const ROCK_EVERY = 0.55;  // seconds between asteroids in the asteroid section
 const ROCK_SPEED = 6;     // rows per second the asteroids tumble towards you
 
 // ---- Boss fight tuning ----
-const BULLET_EVERY = 1.2;  // seconds between bullets
-const BULLET_SPEED = 7;    // rows per second the bullets fly towards you
-const LASER_EVERY = 3.4;   // seconds between lasers
-const LASER_WARN = 1.2;    // seconds of red warning before the laser fires
+const BULLET_EVERY = 1.7;  // seconds between bullets
+const BULLET_SPEED = 6;    // rows per second the bullets fly towards you
+const LASER_EVERY = 4.2;   // seconds between lasers
+const LASER_WARN = 1.6;    // seconds of red warning before the laser fires
 const LASER_FIRE = 0.4;    // seconds the laser stays on
 
 // ---- How the 3D tunnel is drawn ----
@@ -298,8 +298,8 @@ export class Level2Scene extends Phaser.Scene {
     if (this.laserTimer <= 0) {
       this.laserTimer = LASER_EVERY;
       const lane = laneOf(p.u);
-      const other = (lane + (Math.random() < 0.5 ? -1 : 1) + LANES) % LANES;
-      this.lasers.push({ lanes: [lane, other], warnUntil: now + LASER_WARN, fireUntil: now + LASER_WARN + LASER_FIRE });
+      // only ONE lane gets zapped, so a small side-step is enough (easier with the gyro)
+      this.lasers.push({ lanes: [lane], warnUntil: now + LASER_WARN, fireUntil: now + LASER_WARN + LASER_FIRE });
       audio.sfx.beam();
     }
     for (const L of this.lasers) {
@@ -351,7 +351,8 @@ export class Level2Scene extends Phaser.Scene {
     this.cameras.main.shake(200, 0.006);
     this.showToast(`${message} Try again`);
     audio.sfx.bonk();
-    eraseSprites(this, [this.duck], { duration: 600, depth: 20 });
+    // the erase effect only if you can actually see Crumb (not after he's fallen through the floor)
+    if (this.duck.visible) eraseSprites(this, [this.duck], { duration: 600, depth: 20 });
     this.time.delayedCall(950, () => this.spawn());
   }
 
@@ -653,6 +654,9 @@ export class Level2Scene extends Phaser.Scene {
       }
       const sideRoll = this.roll - this.targetRoll; // tilt with the tunnel while it is turning
       this.duck.setTexture(frame).setPosition(feet.x, feet.y).setScale(scale).setRotation(sideRoll);
+      // once Crumb drops below the floor (through a hole) he's gone from view; otherwise he'd look like
+      // he's still standing on the tiles
+      this.duck.setVisible(p.h > -0.2);
       // shadow on the floor below Crumb while jumping
       const fp = rot(wallPoint(p.u, 0));
       const floor = proj(fp.x, fp.y, p.z);
@@ -721,6 +725,11 @@ export class Level2Scene extends Phaser.Scene {
     if (this.finished) return;
     this.finished = true;
     audio.sfx.finish();
+    // clear any pop-up messages so nothing sits on top of the finish panel
+    this.tweens.killTweensOf(this.toast);
+    this.toast.setAlpha(0);
+    this.hintText.setText('');
+    this.warnText.setText('');
     this.bullets.length = 0; this.lasers.length = 0;
     this.tweens.add({ targets: [this.ufo, this.bread], scale: 1.1, y: this.cy - 110, duration: 1500, ease: 'Cubic.out' });
     levelCompletePanel(this, {
