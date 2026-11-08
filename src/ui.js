@@ -62,6 +62,21 @@ export function fullscreenIcon(scene, x = 16, y = 16, size = 52) {
   return { g, zone };
 }
 
+// A big "LEVEL 3 / Edge of Space" banner that drops in at the start of a story level, then fades away.
+export function levelTitle(scene, number, name) {
+  const { width: W, height: H } = scene.scale;
+  const style = { fontFamily: FONT, color: '#fff4dc', stroke: '#3b1d4a', align: 'center', fontStyle: 'bold' };
+  const top = scene.add.text(W / 2, H / 2 - 120, `LEVEL ${number}`, { ...style, fontSize: '40px', strokeThickness: 7, color: '#ffd23f' });
+  const big = scene.add.text(W / 2, H / 2 - 60, name, { ...style, fontSize: '72px', strokeThickness: 10 });
+  const parts = [top, big];
+  parts.forEach((t, i) => {
+    t.setOrigin(0.5).setScrollFactor(0).setDepth(70).setAlpha(0).setScale(0.6);
+    scene.tweens.add({ targets: t, alpha: 1, scale: 1, duration: 450, delay: i * 120, ease: 'Back.out' });
+    scene.tweens.add({ targets: t, alpha: 0, y: t.y - 30, duration: 500, delay: 2000 + i * 80, onComplete: () => t.destroy() });
+  });
+  audio.sfx.whoosh();
+}
+
 // ------------------------------------------------------------------ "erase" effect when Crumb dies
 // The picture wipes away from the top down, and little yellow bits fly off the wiping edge.
 // sprites: the images to erase (the first one sets where the bits come from).

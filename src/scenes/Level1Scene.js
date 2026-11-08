@@ -3,7 +3,8 @@ import { createControls } from '../controls.js';
 import { settings } from '../settings.js';
 import { gyro } from '../gyro.js';
 import { buildLevel1, buildLevel1Demo, groundYAt } from '../level1Track.js';
-import { FONT, eraseSprites, unerase, levelCompletePanel, crumbHud } from '../ui.js';
+import { FONT, eraseSprites, unerase, levelCompletePanel, crumbHud, levelTitle } from '../ui.js';
+import { STORY, storyIndex, startStoryLevel } from '../story.js';
 import { audio } from '../audio.js';
 import { addPauseButton } from './PauseScene.js';
 import { level1Scenery } from '../scenery.js';
@@ -16,7 +17,8 @@ const DOWNFORCE = 0.0011;     // presses the bike onto the ground while riding, 
 const ANTI_HOP = 0.7;     // how much of a bounce off the ground gets soaked up each frame (0 = none, 1 = all)
 const FALL_DEPTH = 220;       // how far below a gap's edge you fall before "Splat!" (bigger = falls deeper)
 const AIR_DRAG = 0.0015;      // low air drag = Crumb keeps his momentum (the default is 0.01)
-const STAR_LIMITS = [48, 70]; // seconds: under the first = 3 stars, under the second = 2 stars (course is longer now)
+// seconds for each story bike level: under the first = 3 stars, under the second = 2 stars
+const STAR_LIMITS = [[30, 45], [30, 45], [30, 45]];
 const BRAKE_SPIN = -0.25;     // S makes it slow down / roll back a bit
 const LEAN_AIR = 0.04;        // how hard A/D spin you in the air (big = easy flips)
 const LEAN_GROUND = 0.006;    // ...and on the ground (weaker)
@@ -41,13 +43,17 @@ const lerpColor = (a, b, t) => {
 export class Level1Scene extends Phaser.Scene {
   constructor() { super('Level1'); }
 
-  // mode: 'story' (normal) or 'demo' (short showcase course)
-  init(data) { this.mode = (data && data.mode) || 'story'; }
+  // mode: 'story' (normal) or 'demo' (short showcase course). stage: which bike level of the story (1-3)
+  init(data) {
+    this.mode = (data && data.mode) || 'story';
+    this.stage = (data && data.stage) || 1;
+  }
 
   create() {
     makeTextures(this);
     this.controls = createControls(this);
-    this.track = this.mode === 'demo' ? buildLevel1Demo() : buildLevel1();
+    this.track = this.mode === 'demo' ? buildLevel1Demo() : buildLevel1(this.stage);
+    this.storyIndex = this.mode === 'demo' ? -1 : storyIndex('Level1', this.stage);
     this.cpIndex = 0;
     this.crashed = false;
     this.finished = false;
@@ -82,6 +88,7 @@ export class Level1Scene extends Phaser.Scene {
 
     this.input.keyboard.on('keydown-R', () => { if (!this.finished) this.respawn(); });
     addPauseButton(this, true); // P / Esc / the II button
+    if (this.storyIndex >= 0) levelTitle(this, this.storyIndex + 1, STORY[this.storyIndex].name);
   }
 
   // ------------------------------------------------------------------ background
@@ -116,6 +123,8 @@ export class Level1Scene extends Phaser.Scene {
       const start = cps[i].x, end = i + 1 < cps.length ? cps[i + 1].x : this.track.finishX;
       if (x >= start) p = i + Phaser.Math.Clamp((x - start) / (end - start), 0, 1);
     }
+    // story levels each use their own part of the sky (sunset -> night), set in level1Track.js
+    if (this.track.sky) p = this.track.sky[0] + (p / cps.length) * (this.track.sky[1] - this.track.sky[0]);
     p = Phaser.Math.Clamp(p, 0, SKIES.length - 1);
     const i = Math.min(Math.floor(p), SKIES.length - 2), t = p - i;
     const a = SKIES[i], b = SKIES[i + 1];
@@ -201,19 +210,26 @@ export class Level1Scene extends Phaser.Scene {
       }
     }
 
-    for (const s of this.track.signs) {
-      const y = groundYAt(this.track, s.x);
+    const finishLineX = this.track.finishX - 400;
+    for (const sign of this.track.signs) {
+      // keep signs from sitting on top of the finish line or a checkpoint flag: slide them back if needed
+      let sx = sign.x;
+      if (Math.abs(sx - finishLineX) < 260) sx = finishLineX - 260;
+      for (const cp of this.track.checkpoints) {
+        if (sx > cp.x - 170 && sx < cp.x + 100) sx = cp.x + 170; // just past the flag
+      }
+      const y = groundYAt(this.track, sx);
       if (y === null) continue;
       const g = this.add.graphics().setDepth(1);
-      g.fillStyle(0x6b4226); g.fillRect(s.x - 5, y - 110, 10, 110);
-      const text = this.add.text(s.x, y - 140, s.text, {
+      g.fillStyle(0x6b4226); g.fillRect(sx - 5, y - 110, 10, 110);
+      const text = this.add.text(sx, y - 140, sign.text, {
         fontFamily: FONT, fontSize: '22px', color: '#3b1d4a', fontStyle: 'bold', align: 'center',
         wordWrap: { width: 260 },
       }).setOrigin(0.5).setDepth(2);
       const w = text.width + 30, h = text.height + 20;
-      g.fillStyle(0x3b1d4a, 0.4); g.fillRoundedRect(s.x - w / 2 + 4, y - 140 - h / 2 + 5, w, h, 10);
-      g.fillStyle(0xfff4dc); g.fillRoundedRect(s.x - w / 2, y - 140 - h / 2, w, h, 10);
-      g.lineStyle(3, 0x6b4226); g.strokeRoundedRect(s.x - w / 2, y - 140 - h / 2, w, h, 10);
+      g.fillStyle(0x3b1d4a, 0.4); g.fillRoundedRect(sx - w / 2 + 4, y - 140 - h / 2 + 5, w, h, 10);
+      g.fillStyle(0xfff4dc); g.fillRoundedRect(sx - w / 2, y - 140 - h / 2, w, h, 10);
+      g.lineStyle(3, 0x6b4226); g.strokeRoundedRect(sx - w / 2, y - 140 - h / 2, w, h, 10);
     }
   }
 
@@ -465,16 +481,22 @@ export class Level1Scene extends Phaser.Scene {
     if (!this.crashed && this.wheelsTouching.size > 0) {
       const d = DOWNFORCE * chassis.mass;
       Body.applyForce(chassis, chassis.position, { x: -Math.sin(chassis.angle) * d, y: Math.cos(chassis.angle) * d });
-      // ANTI-HOP: the springs bounce the wheels up at the bottom of hills and after landings. While they're
-      // down, soak up most of each wheel's speed going straight AWAY from the ground (not along it), so the
-      // bike stays on the hill. Ramp jumps still work: they launch you ALONG the ramp, not away from it.
-      // Only on flat ground and in dips (where the bounces happen), never over the top of a hill, where
-      // floating off a little is natural and squashing it would slow the bike down.
-      // (each wheel checks the ground right under itself, so a wheel starting up a hill isn't held back)
+    }
+    // STICK TO THE HILLS: the springs bounce the wheels up at the bottom of hills and after landings, and the
+    // bike used to fly off the top of every hill and crash down on the far side. So whenever a wheel is on
+    // the ground or JUST above it, soak up most of its speed going straight AWAY from the ground (not along
+    // it). The bike rides smoothly over the hill, down to the bottom and up the next one.
+    // Ramp jumps still work: near a gap there's no ground ahead to measure, so it's switched off there,
+    // and once you're more than a few pixels in the air you fly freely.
+    // (each wheel checks the ground right under itself, so a wheel starting up a hill isn't held back)
+    if (!this.crashed) {
       for (const body of [back, front]) {
         const px = body.position.x;
         const yA = groundYAt(this.track, px - 25), yB = groundYAt(this.track, px + 25), yM = groundYAt(this.track, px);
-        if (yA === null || yB === null || yM === null || 2 * yM - yA - yB < -0.5) continue;
+        if (yA === null || yB === null || yM === null) continue;
+        const touching = this.wheelsTouching.has(body);
+        const gapBelow = yM - (body.position.y + 16); // pixels between the bottom of the wheel and the ground
+        if (!touching && gapBelow > 14) continue;
         const len = Math.hypot(50, yB - yA);
         const nx = (yB - yA) / len, ny = -50 / len; // "up" out of the ground here
         const v = body.velocity;
@@ -555,15 +577,18 @@ export class Level1Scene extends Phaser.Scene {
     this.tweens.add({ targets: [this.ufo, this.bread], y: '-=400', x: '+=200', duration: 1600, ease: 'Cubic.in' });
     // show the stars, then go straight into the next cutscene
     const demo = this.mode === 'demo';
+    const n = this.storyIndex;
+    const lines = ['The UFO is speeding off over the hills!', 'It\'s getting dark... the UFO is climbing!', 'The UFO is heading for space... Crumb won\'t give up!'];
     levelCompletePanel(this, {
-      title: demo ? 'Demo: bike done!' : 'Level 1 complete!', secs: this.elapsed / 1000,
-      limits: demo ? [25, 40] : STAR_LIMITS, levelKey: demo ? 'demo1' : 'level1',
-      line: demo ? 'Next up: the space tunnel!' : 'The UFO is heading for space... Crumb won\'t give up!', fixed: true,
+      title: demo ? 'Demo: bike done!' : `Level ${n + 1} complete!`, secs: this.elapsed / 1000,
+      limits: demo ? [24, 35] : STAR_LIMITS[this.stage - 1], levelKey: demo ? 'demo1' : `story${n + 1}`,
+      line: demo ? 'Next up: the space tunnel!' : lines[this.stage - 1], fixed: true,
       crumbs: { got: this.crumbs.got, total: this.crumbs.total },
-      // story: the middle cutscene, then Level 2.  demo: straight to the short space tunnel
+      // story: the next level (the middle cutscene plays before the first space level).
+      // demo: straight to the short space tunnel
       onDone: () => (demo
         ? this.scene.start('Cutscene', { id: 'middle', next: 'Level2', nextData: { mode: 'demo' }, fast: true })
-        : this.scene.start('Cutscene', { id: 'middle', next: 'Level2' })),
+        : startStoryLevel(this, n + 1)),
     });
   }
 }

@@ -102,13 +102,20 @@ export function groundYAt(track, x) {
   return null; // over a gap
 }
 
-export function buildLevel1() {
+// STORY MODE has 3 bike levels. stage = 1, 2 or 3.
+// Each course also says which part of the sky it uses (0 = pink sunset ... 4 = night, almost space),
+// so the sky keeps getting darker from level to level.
+// "kicker" = steep ramp, then a gap, then a long downhill landing so big air feels smooth.
+export function buildLevel1(stage = 1) {
+  if (stage === 2) return twilightHills();
+  if (stage === 3) return edgeOfSpace();
+  return sunsetRide();
+}
+
+// ---------------------------------------------------------------- Level 1: Sunset Ride
+function sunsetRide() {
   const t = makeTrackBuilder(-600, 560);
 
-  // A short course (built for a quick demo) with BIG jumps for tricks.
-  // "kicker" = steep ramp, then a gap, then a long downhill landing so big air feels smooth.
-
-  // ---------- Area 0: tutorial, pink sunset ----------
   // ---------- Area 0: tutorial, pink sunset ----------
   t.flat(600).checkpoint()
     .sign('Hold W to ride!', 180)
@@ -137,10 +144,84 @@ export function buildLevel1() {
     .hills(2, 150, 560)
     .flat(300);
 
-  // ---------- Area 2: dusk, huge drops ----------
+  // ---------- Area 2: bumpy meadow and one more jump ----------
   t.checkpoint().flat(250)
-    .slope(500, -260)
-    .ramp(240, -120).airCrumbs(460, 180, 5).gap(420, 480)
+    .crumbs(900, 5)
+    .hills(3, 120, 500)
+    .flat(200)
+    .boost(60)
+    .flat(150)
+    .ramp(260, -110).airCrumbs(320, 120, 3).gap(300, 60)
+    .slope(800, 180).flat(300)
+    .sign('Next stop: the twilight hills!', 0)
+    .flat(600);
+
+  const track = t.finish();
+  track.sky = [0, 1.4];
+  return track;
+}
+
+// ---------------------------------------------------------------- Level 2: Twilight Hills
+function twilightHills() {
+  const t = makeTrackBuilder(-600, 560);
+
+  // ---------- rolling hills ----------
+  t.flat(600).checkpoint()
+    .sign('Keep your speed up for the big jumps!', 160)
+    .crumbs(500, 4)
+    .flat(500)
+    .hills(2, 180, 640)
+    .flat(250)
+    .boost(80)
+    .flat(200)
+    .ramp(260, -110).airCrumbs(300, 110, 4).gap(260, 160)
+    .slope(950, 220).flat(300);
+
+  // ---------- the big drop ----------
+  t.checkpoint().flat(250)
+    .ramp(740, -380).airCrumbs(460, 180, 5).gap(420, 480) // one smooth kicker (an uphill + a separate ramp left a bump)
+    .slope(1400, 400).flat(150).boost(60).flat(150)
+    .ramp(320, -190).airCrumbs(420, 200, 5).gap(380, 320)
+    .slope(1300, 360).flat(300);
+
+  // ---------- camel humps ----------
+  t.checkpoint().flat(250)
+    .crumbs(1000, 5, 70)
+    .hills(1, 320, 1000)
+    .flat(200)
+    .hills(2, 150, 560)
+    .flat(200)
+    .boost(40)
+    .flat(150)
+    .ramp(260, -110).airCrumbs(320, 120, 3).gap(300, 60)
+    .slope(1100, 250).flat(300)
+    .sign('Stars are coming out... nearly at the edge of space!', 0)
+    .flat(600);
+
+  const track = t.finish();
+  track.sky = [1.4, 2.8];
+  return track;
+}
+
+// ---------------------------------------------------------------- Level 3: Edge of Space
+function edgeOfSpace() {
+  const t = makeTrackBuilder(-600, 560);
+
+  // ---------- warm-up ----------
+  t.flat(600).checkpoint()
+    .sign('The UFO is heading for space. Catch it!', 160)
+    .crumbs(500, 4)
+    .flat(500)
+    .hills(2, 150, 560)
+    .flat(250)
+    .boost(80)
+    .flat(200)
+    .ramp(260, -110).airCrumbs(300, 110, 4).gap(260, 160)
+    .slope(1250, 290).flat(300); // (long landing: the boost pad before this jump sends you far)
+
+  // ---------- dusk, huge drops ----------
+  t.checkpoint().flat(250)
+    .ramp(740, -380).airCrumbs(460, 180, 5).gap(420, 480) // one smooth kicker (an uphill + a separate ramp left a bump)
     .slope(1400, 400).flat(150).boost(60).flat(150)
     .ramp(260, -110).airCrumbs(320, 120, 3).gap(300, 60)
     .slope(800, 180).flat(250)
@@ -158,7 +239,9 @@ export function buildLevel1() {
     .crumbs(800, 3)
     .flat(800);
 
-  return t.finish();
+  const track = t.finish();
+  track.sky = [2.8, 4];
+  return track;
 }
 
 // DEMO MODE: a short course that shows off everything (boost pads, crumbs, big air, the sky going
@@ -174,7 +257,7 @@ export function buildLevel1Demo() {
     .boost(40)
     .flat(150)
     .ramp(240, -100).airCrumbs(280, 100, 3).gap(240, 150)
-    .slope(700, 200).flat(150);
+    .slope(1050, 300).flat(150); // long landing slopes, so even at top speed you land on the way down
 
   t.checkpoint().flat(100)
     .hills(1, 200, 700)
@@ -182,12 +265,20 @@ export function buildLevel1Demo() {
 
   t.checkpoint().flat(100)
     .ramp(260, -110).airCrumbs(300, 120, 3).gap(280, 100)
-    .slope(700, 180).flat(150);
+    .slope(1000, 260).flat(150);
+
+  // the big drop (added to make the demo a bit longer)
+  t.checkpoint().flat(150)
+    .crumbs(600, 4, 70)
+    .hills(2, 150, 560)
+    .flat(150)
+    .ramp(740, -380).airCrumbs(460, 180, 5).gap(420, 480) // one smooth kicker (an uphill + a separate ramp left a bump)
+    .slope(1400, 400).flat(150);
 
   t.checkpoint().flat(100)
     .slope(500, 250).boost(10).flat(100)
     .ramp(380, -150).airCrumbs(420, 190, 5).gap(340, 320)
-    .slope(1000, 360).flat(150)
+    .slope(1350, 480).flat(150)
     .sign('The UFO is getting away!', 0)
     .flat(500);
 

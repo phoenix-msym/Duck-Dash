@@ -7,8 +7,8 @@ import { menuScenery } from '../scenery.js';
 const MODES = [
   {
     label: 'Story Mode',
-    about: 'The full adventure: cutscenes, the sunset bike ride and the space tunnel.',
-    go: (s) => s.scene.start('Cutscene', { id: 'intro', next: 'Level1' }),
+    about: 'The full adventure: 6 levels, from a sunset bike ride all the way into space.',
+    go: (s) => s.scene.start('StoryLevels'), // the level menu: play from the start or pick a level
   },
   {
     label: 'Endless Mode',
@@ -49,16 +49,18 @@ export class ModeSelectScene extends Phaser.Scene {
     buttons.push(makeButton(this, W / 2, 610, 'Back', () => this.scene.start('Menu'), { w: 200, h: 50, size: 24 }));
     const menu = keyboardMenu(this, buttons);
     about.setText(MODES[0].about);
-    // show the description of whichever mode is highlighted with the keyboard
-    this.events.on('update', () => {
-      const i = buttons.findIndex((b) => b.selected);
-      if (i >= 0 && i < MODES.length && about.text !== MODES[i].about) about.setText(MODES[i].about);
-    });
+    // (the description of whichever mode is highlighted with the keyboard is updated in update() below.
+    //  It used to be a scene event listener, which stayed around after leaving this screen and crashed
+    //  the game the second time you opened it.)
+    this.buttons = buttons;
+    this.about = about;
     this.input.keyboard.on('keydown-ESC', () => this.scene.start('Menu'));
     void menu;
   }
 
   update(time, delta) {
     this.scenery.update(time, delta);
+    const i = this.buttons.findIndex((b) => b.selected);
+    if (i >= 0 && i < MODES.length && this.about.text !== MODES[i].about) this.about.setText(MODES[i].about);
   }
 }

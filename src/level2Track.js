@@ -32,13 +32,34 @@ function makeTunnelBuilder(seed) {
   const hints = [];       // {row, text}
   const winds = [];       // {start, end, dir}  dir: +1 pushes right, -1 pushes left
   const crumbs = [];      // {z, lane, h}  bread crumbs floating in the tunnel
+  const props = [];       // {z, lane, kind}  candy to dodge: 'cane' (too tall to jump, steer around) or 'gum' (jump it)
   const rand = seededRandom(seed);
   const LPS = LANES_PER_SIDE;
   const side = (lane) => Math.floor(lane / LPS);
   const ringDist = (a, b) => { const d = Math.abs(a - b) % LANES; return Math.min(d, LANES - d); };
 
   const b = {
-    rows, checkpoints, hints, winds, crumbs, rand, side,
+    rows, checkpoints, hints, winds, crumbs, props, rand, side,
+
+    // fill with plain tiles until this part (which started at row "start") is "length" rows long
+    padPart(start, length) { b.full(Math.max(0, start + length - rows.length)); },
+
+    // A field of candy obstacles: every "every" rows, a few candy canes and gumdrops stand on the tiles.
+    // There's always plenty of room to steer between them.
+    candyField(count, every = 4, perRow = 4) {
+      const start = rows.length;
+      b.full(count);
+      for (let r = start + 3; r < start + count - 2; r += every) {
+        const used = new Set();
+        const n = perRow;
+        for (let k = 0; k < n; k++) {
+          const lane = Math.floor(rand() * LANES);
+          if (used.has(lane)) continue;
+          used.add(lane);
+          props.push({ z: r + 0.5, lane, kind: rand() < 0.5 ? 'cane' : 'gum', seed: rand() });
+        }
+      }
+    },
 
     // make(count, fn): fn(lane, i) returns what goes in that lane (true = tile, false = hole, or a number)
     make(count, fn) {
@@ -110,12 +131,22 @@ function makeTunnelBuilder(seed) {
 }
 
 // ============================================================ STORY MODE
-export function buildLevel2() {
+// 3 space tunnel levels. stage = 1, 2 or 3.
+// Every part between checkpoints has a "style" (0 basics, 1 holes/cracks, 2 wall run, 3 wind, 4 boss)
+// that sets its colours, speed and background planet. That list is track.sections.
+export function buildLevel2(stage = 1) {
+  if (stage === 2) return wallRunWinds();
+  if (stage === 3) return ufoShowdown();
+  return intoTheTube();
+}
+
+// ---------------------------------------------------------------- Level 4: Into the Tube
+function intoTheTube() {
   const t = makeTunnelBuilder(7);
   const { side } = t;
   const LPS = LANES_PER_SIDE;
 
-  // ---------------- Section 1: the basics ----------------
+  // ---------------- Part 1: the basics ----------------
   t.checkpoint();
   t.hint('A / D = move.  Grab the bread crumbs!');
   t.crumbTrail(2, 5, 1, 0.5);
@@ -133,7 +164,22 @@ export function buildLevel2() {
   t.make(18, (l) => side(l) !== 0);
   t.rest(12);
 
-  // ---------------- Section 2: holes, cracks and lily pads ----------------
+  // ---------------- Part 2: practice ----------------
+  t.checkpoint();
+  t.hint('Jump the gaps, or run around them on the walls!');
+  t.rest(12);
+  t.crumbTrail(2, 4, 2, 1.3);
+  t.jumpGap(0);
+  t.rest(12);
+  t.crumbTrail(4, 5, 13, 0.5);
+  t.make(16, (l) => side(l) !== 0 && !(side(l) === 1 && l % LPS < 2));
+  t.rest(12);
+  t.stepping(0);
+  t.rest(12);
+  t.holes(14, 0.06);
+  t.rest(12);
+
+  // ---------------- Part 3: holes, cracks and lily pads ----------------
   t.checkpoint();
   t.hint('Lily pads = SPEED BOOST!  Cracked tiles collapse ahead: switch sides!');
   t.full(6);
@@ -149,8 +195,18 @@ export function buildLevel2() {
   t.rest(14);
   t.stepping(0);
   t.rest(10);
+  t.hint('The UFO is getting closer!');
+  t.full(46);
 
-  // ---------------- Section 3: WALL RUN ----------------
+  return finishTrack(t, Infinity, Infinity, [0, 0, 1]);
+}
+
+// ---------------------------------------------------------------- Level 5: Wall Run Winds
+function wallRunWinds() {
+  const t = makeTunnelBuilder(21);
+  const { side } = t;
+
+  // ---------------- Part 1: WALL RUN ----------------
   t.checkpoint();
   t.hint('Whole sides are missing! Run onto another wall!');
   t.rest(14);
@@ -162,7 +218,21 @@ export function buildLevel2() {
   t.holes(14, 0.05); // only a few holes: this part is played with a joystick!
   t.rest(12);
 
-  // ---------------- Section 4: WIND ----------------
+  // ---------------- Part 2: more wall running ----------------
+  t.checkpoint();
+  t.hint('Sides keep vanishing! Find a wall that is still there!');
+  t.rest(12);
+  t.missingSides(0);
+  t.rest(12);
+  t.crumbTrail(4, 5, 5, 0.5);
+  t.make(18, (l) => side(l) === 1 || side(l) === 3);
+  t.rest(12);
+  t.crackedPatch(12);
+  t.rest(12);
+  t.missingSides(1);
+  t.rest(12);
+
+  // ---------------- Part 3: WIND ----------------
   t.checkpoint();
   t.hint('WIND ahead! Lean against it!');
   t.rest(14);
@@ -173,7 +243,39 @@ export function buildLevel2() {
   t.windZone(+1, () => { t.full(6); t.jumpGap(1); t.full(8); });
   t.rest(10);
 
-  // ---------------- Section 5: the UFO fights back! ----------------
+  // ---------------- Part 4: a storm ----------------
+  t.checkpoint();
+  t.hint('A space storm! The wind keeps changing direction!');
+  t.rest(12);
+  t.windZone(-1, () => { t.crumbTrail(3, 4, 14, 0.5); t.holes(20, 0.04); });
+  t.rest(12);
+  t.windZone(+1, () => { t.full(4); t.crackedPatch(10); t.full(4); });
+  t.rest(12);
+  t.windZone(-1, () => t.make(18, (l) => side(l) !== 2));
+  t.rest(10);
+  t.hint('There it is! The UFO is right ahead!');
+  t.full(46);
+
+  return finishTrack(t, Infinity, Infinity, [2, 2, 3, 3]);
+}
+
+// ---------------------------------------------------------------- Level 6: UFO Showdown
+function ufoShowdown() {
+  const t = makeTunnelBuilder(33);
+
+  // ---------------- Part 1: the final stretch ----------------
+  t.checkpoint();
+  t.hint('Last chase! Get close to the UFO!');
+  t.rest(14);
+  t.crumbTrail(2, 5, 1, 0.5);
+  t.holes(16, 0.05);
+  t.rest(12);
+  t.windZone(+1, () => t.holes(16, 0.03));
+  t.rest(12);
+  t.jumpGap(1);
+  t.rest(12);
+
+  // ---------------- Part 2: the UFO fights back! ----------------
   t.checkpoint();
   const bossStart = t.rows.length;
   t.hint('BOSS FIGHT! Dodge the blasts and the lasers!');
@@ -185,11 +287,23 @@ export function buildLevel2() {
   t.crumbTrail(0, 4, 10, 0.5);
   t.holes(16, 0.04);
   t.rest(18);
+
+  // ---------------- Part 3: it's getting angry! ----------------
+  t.checkpoint();
+  t.hint('The UFO is angry! Keep dodging!');
+  t.rest(12);
+  t.crackedPatch(10);
+  t.rest(14);
+  t.crumbTrail(2, 5, 6, 0.5);
+  t.holes(16, 0.05);
+  t.rest(14);
+  t.missingSides(0);
+  t.rest(16);
   const bossEnd = t.rows.length;
   t.hint('You caught up to the UFO!');
   t.full(46);
 
-  return finishTrack(t, bossStart, bossEnd);
+  return finishTrack(t, bossStart, bossEnd, [3, 4, 4]);
 }
 
 // ============================================================ DEMO MODE
@@ -199,52 +313,131 @@ export function buildLevel2Demo() {
   const { side } = t;
   const LPS = LANES_PER_SIDE;
 
-  // (aims for about 25-30 seconds: every section of Story mode, each one short)
-  t.checkpoint();
+  // (7 parts. Every checkpoint switches the tunnel to a new "vibe" (listed in themes at the bottom) AND has
+  //  its own obstacle, so it feels like a tour of different levels. Each part lasts about 10 seconds
+  //  (its length in rows = 10 x how fast you run there), and the boss fight at the end lasts about 16.)
+  let part = t.rows.length;
+  t.checkpoint(); // NEON: the basics (runs at 9 rows/s)
   t.hint('DEMO: A / D move, W / SPACE jump!');
   t.crumbTrail(2, 4, 1, 0.5);
   t.rest(12);
   t.make(3, () => false);  // a gap to jump
   t.rest(12);
   t.make(12, (l) => side(l) !== 0); // the floor disappears: run onto a wall
-  t.full(6);
+  t.rest(10);
+  t.make(3, () => false);  // ...and one more gap
+  t.rest(10);
+  t.make(12, (l) => side(l) !== 2); // the ceiling disappears this time
+  t.padPart(part, 90);
 
-  t.checkpoint();
-  t.hint('Lily pads boost you. Cracked tiles collapse: switch sides!');
-  t.make(8, (l) => (side(l) === 0 ? (l % LPS === 1 || l % LPS === 2 ? PAD : TILE) : TILE));
+  part = t.rows.length;
+  t.checkpoint(); // LILY POND: lily pads everywhere (9.8 rows/s, but the boosts make you faster)
+  t.hint('LILY PADS! Run over them for a speed boost!');
+  t.crumbTrail(0, 4, 2, 0.5);
+  t.make(10, (l) => (side(l) === 0 && (l % LPS === 1 || l % LPS === 2) ? PAD : TILE)); // a runway on the floor
   t.full(6);
-  t.crumbTrail(0, 3, 2, 0.5);
-  t.crackedPatch(10);
-  t.rest(12);
+  t.make(10, (l) => (l % LPS === 1 || l % LPS === 2 ? PAD : TILE));                     // ...on every wall
+  t.full(6);
+  t.crumbTrail(0, 5, 6, 0.5);
+  t.make(14, (l, i) => ((l + i) % 3 === 0 ? PAD : TILE));                                 // a whole pond of them
+  t.full(6);
+  t.make(10, (l) => (side(l) === 2 && (l % LPS === 1 || l % LPS === 2) ? PAD : TILE)); // a runway on the ceiling
+  t.padPart(part, 110);
 
-  t.checkpoint();
-  t.hint('WALL RUN: whole sides go missing!');
-  t.full(5);
+  part = t.rows.length;
+  t.checkpoint(); // CANDY: candy canes and gumdrops to dodge, and floating platforms (9.8 rows/s)
+  t.hint('CANDY! Steer around the candy canes, jump the gumdrops!');
+  t.full(4);
+  t.candyField(24, 5, 3);
+  t.full(4);
+  t.crumbTrail(2, 4, 2, 1.3);
+  t.stepping(0);
+  t.full(8);
+  t.candyField(22, 4, 4); // a bit closer together and more of them
+  t.padPart(part, 98);
+
+  part = t.rows.length;
+  t.checkpoint(); // DESERT: wall run (10.4 rows/s)
+  t.hint('WALL RUN! Whole sides go missing!');
+  t.full(4);
+  t.crumbTrail(4, 5, 9, 0.5);
   t.make(14, (l) => side(l) === 0 || side(l) === 2);
-  t.rest(12);
+  t.full(8);
+  t.make(14, (l) => side(l) === 1 || side(l) === 3);
+  t.full(8);
+  t.make(14, (l) => side(l) === 3); // only one wall left!
+  t.full(8);
+  t.make(14, (l) => side(l) === 0 || side(l) === 2);
+  t.padPart(part, 104);
 
-  t.checkpoint();
+  part = t.rows.length;
+  t.checkpoint(); // SYNTHWAVE: broken tiles (9.8 rows/s)
+  t.hint('BROKEN TILES! They collapse ahead of you: switch sides!');
+  t.full(4);
+  for (let k = 0; k < 6; k++) {
+    t.crackedPatch(9); // two sides cracked, two sides solid (a different pair each time)
+    t.full(4);
+  }
+  t.padPart(part, 98);
+
+  part = t.rows.length;
+  t.checkpoint(); // FROST: wind (10.8 rows/s)
   t.hint('WIND! Lean against it!');
   t.full(5);
   t.windZone(+1, () => { t.crumbTrail(1, 4, 0, 0.5); t.holes(18, 0.03); });
-  t.rest(12);
+  t.rest(8);
+  t.windZone(-1, () => t.full(16));
+  t.rest(8);
+  t.windZone(+1, () => t.make(18, (l) => side(l) !== 0));
+  t.padPart(part, 108);
 
-  t.checkpoint();
+  part = t.rows.length;
+  t.checkpoint(); // RED ALERT: the boss fight, the longest part (10.2 rows/s x 16 seconds)
   const bossStart = t.rows.length;
   t.hint('BOSS: the UFO fights back! Dodge!');
-  t.full(22);
+  t.full(20);
+  t.crumbTrail(2, 5, 1, 0.5);
   t.holes(12, 0.03);
-  t.full(36);
+  t.full(30);
+  t.crumbTrail(2, 5, 9, 0.5);
+  t.holes(12, 0.03);
+  t.full(30);
+  t.holes(12, 0.03);
+  t.padPart(part, 157);
   const bossEnd = t.rows.length;
-  t.full(46);
+  t.full(6 + 34); // a short calm run to the finish line, then the bit you jog along after finishing
 
-  return finishTrack(t, bossStart, bossEnd);
+  const track = finishTrack(t, bossStart, bossEnd, [0, 1, 1, 2, 1, 3, 4]);
+  track.themes = ['neon', 'lilyPond', 'candy', 'desert', 'synthwave', 'frost', 'redAlert'];
+  return track;
 }
 
-function finishTrack(t, bossStart, bossEnd) {
+// Bread crumbs are placed in a lane before we know what the tiles there will be, so some ended up
+// floating over a hole or a missing wall where you can't reach them. Low crumbs over a hole get moved
+// to the nearest lane that has a tile (or removed if the whole row is empty). Crumbs high in the air
+// (h > 1) are left alone: those are the ones over gaps that you jump for.
+function fixCrumbs(rows, crumbs, from = 0) {
+  for (let i = crumbs.length - 1; i >= from; i--) {
+    const c = crumbs[i];
+    if (c.h > 1) continue;
+    const row = rows[Math.floor(c.z)];
+    if (!row || row[c.lane] !== HOLE) continue;
+    let moved = false;
+    for (let d = 1; d <= LANES / 2 && !moved; d++) {
+      for (const lane of [(c.lane + d) % LANES, (c.lane - d + LANES) % LANES]) {
+        if (row[lane] !== HOLE) { c.lane = lane; moved = true; break; }
+      }
+    }
+    if (!moved) crumbs.splice(i, 1);
+  }
+}
+
+// sections: the style (0-4) of each part between checkpoints (see buildLevel2)
+function finishTrack(t, bossStart, bossEnd, sections = [0, 1, 2, 3, 4]) {
+  fixCrumbs(t.rows, t.crumbs);
   return {
-    rows: t.rows, checkpoints: t.checkpoints, hints: t.hints, winds: t.winds, crumbs: t.crumbs,
-    rockZones: [], bossStart, bossEnd, finishRow: t.rows.length - 34,
+    rows: t.rows, checkpoints: t.checkpoints, hints: t.hints, winds: t.winds, crumbs: t.crumbs, props: t.props,
+    rockZones: [], bossStart, bossEnd, finishRow: t.rows.length - 34, sections,
   };
 }
 
@@ -259,10 +452,11 @@ export function makeEndlessTrack() {
   t.hint('ENDLESS! One life. How far can you go?');
   const track = {
     rows: t.rows, checkpoints: t.checkpoints, hints: t.hints, winds: t.winds, crumbs: t.crumbs,
-    rockZones: [], bossStart: BOSS_FROM, bossEnd: Infinity, finishRow: Infinity, endless: true,
+    rockZones: [], bossStart: BOSS_FROM, bossEnd: Infinity, finishRow: Infinity, endless: true, sections: [0],
     // add about n more rows of obstacles
     extend(n = 80) {
       const target = t.rows.length + n;
+      const firstNewCrumb = t.crumbs.length;
       while (t.rows.length < target) {
         const dist = t.rows.length;
         const d = Math.min(3, Math.floor(dist / 250));           // difficulty 0..3 grows with distance
@@ -278,6 +472,7 @@ export function makeEndlessTrack() {
         else t.windZone(t.rand() < 0.5 ? 1 : -1, () => t.holes(18, 0.04));
         t.rest(Math.max(8, 16 - d * 2)); // a breather that gets shorter the further you go
       }
+      fixCrumbs(t.rows, t.crumbs, firstNewCrumb); // no crumbs floating over holes
     },
   };
   track.extend(200);

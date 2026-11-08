@@ -3,7 +3,8 @@ import { createControls } from '../controls.js';
 import { settings } from '../settings.js';
 import { gyro } from '../gyro.js';
 import { buildLevel2, buildLevel2Demo, makeEndlessTrack, LANES, LANES_PER_SIDE, SIDES, HOLE, PAD, CRACKED } from '../level2Track.js';
-import { FONT, eraseSprites, unerase, levelCompletePanel, fmtTime, crumbHud, makeButton, keyboardMenu } from '../ui.js';
+import { FONT, eraseSprites, unerase, levelCompletePanel, fmtTime, crumbHud, makeButton, keyboardMenu, levelTitle } from '../ui.js';
+import { STORY, storyIndex, startStoryLevel } from '../story.js';
 import { wallet } from '../wallet.js';
 import { audio } from '../audio.js';
 import { addPauseButton } from './PauseScene.js';
@@ -23,7 +24,8 @@ const BOOST_TIME = 1.2;   // seconds a lily pad boost lasts
 const CRUMBLE_DELAY = 0.2; // seconds before a touched cracked tile falls (was 0.35)
 const CRUMBLE_AHEAD = 7;   // how many rows in front of you collapse when you step on a cracked tile
 const WIND = 2.0;         // lanes per second the wind pushes you
-const STAR_LIMITS = [75, 100]; // seconds: under the first = 3 stars, under the second = 2 stars
+// seconds for each story space level: under the first = 3 stars, under the second = 2 stars
+const STAR_LIMITS = [[48, 65], [54, 72], [34, 48]];
 const ROCK_EVERY = 0.55;  // seconds between asteroids in the asteroid section
 const ROCK_SPEED = 6;     // rows per second the asteroids tumble towards you
 
@@ -54,6 +56,26 @@ const AREAS = [
   { bgTop: 0x080104, bgBottom: 0x16040a, tileA: 0xffa08f, tileB: 0xff7b74, nebula: 0xff5a49 }, // boss
   { bgTop: 0x010703, bgBottom: 0x051409, tileA: 0xc8ff6a, tileB: 0xa6e84a, nebula: 0xb6ff3b },
 ];
+// DEMO MODE "vibes": every checkpoint switches the whole tunnel to a new look, like a different level.
+// pattern = how the two tile colours are laid out: checker, lanes (stripes along the tunnel),
+// rings (stripes around the tunnel) or sides (each wall a different colour).
+// windGlow = colour of the shimmer that ripples over the tiles in the wind.
+const THEMES = {
+  neon:      { bgTop: 0x02030c, bgBottom: 0x0a1030, tileA: 0x5d7dff, tileB: 0x3a55e0, nebula: 0x4d7dff, pattern: 'checker' },
+  lilyPond:  { bgTop: 0x020a08, bgBottom: 0x06241a, tileA: 0x4fd18b, tileB: 0x2fae6e, nebula: 0xff7ac8, pattern: 'rings' },
+  candy:     { bgTop: 0x12030f, bgBottom: 0x2e0a2a, tileA: 0xff8fd0, tileB: 0xfff1a8, nebula: 0xff5fb8, pattern: 'lanes' },
+  desert:    { bgTop: 0x0c0603, bgBottom: 0x2a1406, tileA: 0xffc46b, tileB: 0xc0622e, nebula: 0xff9a3c, pattern: 'sides' },
+  synthwave: { bgTop: 0x07010f, bgBottom: 0x1c0638, tileA: 0xb44cff, tileB: 0x2ee6ff, nebula: 0xff3cac, pattern: 'rings' },
+  frost:     { bgTop: 0x01060f, bgBottom: 0x06203a, tileA: 0x3f86d8, tileB: 0x2a63b3, nebula: 0x9fe8ff, pattern: 'checker', windGlow: 0xe6fbff },
+  redAlert:  { bgTop: 0x0a0103, bgBottom: 0x200409, tileA: 0xff7a6e, tileB: 0x4a1a24, nebula: 0xff3049, pattern: 'checker' },
+};
+const PATTERNS = {
+  checker: (r, l) => (Math.floor(r / 2) + l) % 2,
+  lanes: (r, l) => l % 2,
+  rings: (r) => Math.floor(r / 4) % 2,
+  sides: (r, l) => Math.floor(l / LANES_PER_SIDE) % 2,
+};
+
 // how big the UFO looks in each section: small and far at the start, closer every checkpoint
 const UFO_SCALE = [0.12, 0.17, 0.22, 0.28, 0.45];
 
@@ -88,6 +110,13 @@ export class Level2Scene extends Phaser.Scene {
   init(data) {
     this.mode = (data && data.mode) || 'story';
     this.endless = this.mode === 'endless';
+    this.stage = (data && data.stage) || 1; // which space level of the story (1-3)
+  }
+
+  // the style (0 basics, 1 holes, 2 wall run, 3 wind, 4 boss) of the part we're in now
+  sectionStyle(cp = this.cpIndex) {
+    const s = this.track.sections;
+    return s[Math.min(cp, s.length - 1)];
   }
 
   create() {
@@ -96,7 +125,8 @@ export class Level2Scene extends Phaser.Scene {
     this.cx = W / 2; this.cy = H / 2 - 40;
     this.controls = createControls(this);
     this.space = this.input.keyboard.addKey('SPACE');
-    this.track = this.endless ? makeEndlessTrack() : this.mode === 'demo' ? buildLevel2Demo() : buildLevel2();
+    this.track = this.endless ? makeEndlessTrack() : this.mode === 'demo' ? buildLevel2Demo() : buildLevel2(this.stage);
+    this.storyIndex = this.mode === 'story' ? storyIndex('Level2', this.stage) : -1;
     this.cpIndex = 0;
     this.elapsed = 0;
     this.finished = false;
@@ -146,6 +176,7 @@ export class Level2Scene extends Phaser.Scene {
       else if (!this.finished) this.spawn();
     });
     addPauseButton(this, false); // P / Esc / the II button
+    if (this.storyIndex >= 0) levelTitle(this, this.storyIndex + 1, STORY[this.storyIndex].name);
   }
 
   spawn() {
@@ -185,7 +216,7 @@ export class Level2Scene extends Phaser.Scene {
   // how fast Crumb runs right now (rows per second)
   baseSpeed() {
     if (this.endless) return 9 + Math.min(4, this.player.z / 250); // Endless: slowly gets faster
-    return SPEEDS[Math.min(this.cpIndex, SPEEDS.length - 1)];
+    return SPEEDS[this.sectionStyle()];
   }
 
   tileAt(z, u) {
@@ -293,11 +324,19 @@ export class Level2Scene extends Phaser.Scene {
       if (p.h < FALL_DEPTH && !p.dead) this.die('Lost in space!');
     }
 
+    // candy obstacles: canes are too tall to jump (steer around them), gumdrops can be jumped over
+    for (const c of this.track.props || []) {
+      if (Math.abs(c.z - p.z) > 0.35) continue;
+      const tall = c.kind === 'cane' ? 1.25 : 0.55; // (a jump only clears a cane right at its very top)
+      if (ringGap(c.lane + 0.5, p.u) < 0.6 && p.h < tall && p.h > -0.2) { this.die(c.kind === 'cane' ? 'Bonked a candy cane!' : 'Stuck in a gumdrop!'); return; }
+    }
+
     // checkpoints
     const next = this.track.checkpoints[this.cpIndex + 1];
     if (next !== undefined && p.z > next) {
       this.cpIndex++;
-      this.showToast(this.cpIndex === this.track.checkpoints.length - 1 ? 'BOSS FIGHT!' : `Checkpoint ${this.cpIndex}!`);
+      const bossNow = this.sectionStyle() === 4 && this.sectionStyle(this.cpIndex - 1) !== 4;
+      this.showToast(bossNow ? 'BOSS FIGHT!' : `Checkpoint ${this.cpIndex}!`);
       audio.sfx.checkpoint();
     }
     if (p.z > this.track.finishRow) this.finish();
@@ -452,10 +491,35 @@ export class Level2Scene extends Phaser.Scene {
       if (z >= start) p = i + Phaser.Math.Clamp((z - start) / (end - start), 0, 1);
     }
     const secStart = cps[this.cpIndex], secEnd = cps[this.cpIndex + 1] ?? this.track.finishRow;
-    return { section: Math.min(this.cpIndex, 4), t: Phaser.Math.Clamp((z - secStart) / (secEnd - secStart), 0, 1), p };
+    return { section: this.sectionStyle(), t: Phaser.Math.Clamp((z - secStart) / (secEnd - secStart), 0, 1), p };
   }
 
   areaColors() {
+    if (!this.endless) {
+      const info = this.sectionInfo();
+      const themes = this.track.themes;
+      let a, b, t;
+      if (themes) {
+        // DEMO: each checkpoint has its own vibe. It changes quickly right as you reach the checkpoint.
+        const cps = this.track.checkpoints;
+        const i = this.cpIndex;
+        a = THEMES[themes[Math.min(i, themes.length - 1)]];
+        b = THEMES[themes[Math.min(i + 1, themes.length - 1)]];
+        const next = cps[i + 1];
+        t = next === undefined ? 0 : Phaser.Math.Clamp((this.player.z - (next - 6)) / 6, 0, 1);
+      } else {
+        // each part's colours come from its style; near the end of a part, blend into the next part's colours
+        a = AREAS[info.section]; b = AREAS[this.sectionStyle(this.cpIndex + 1)];
+        t = Phaser.Math.Clamp((info.t - 0.75) / 0.25, 0, 1);
+      }
+      const out = {};
+      for (const key of Object.keys(a)) {
+        if (typeof a[key] === 'number' && typeof b[key] === 'number') out[key] = mix(a[key], b[key], t);
+        else out[key] = t < 0.5 ? a[key] : b[key];
+      }
+      out.progress = info.p;
+      return out;
+    }
     let p = this.sectionInfo().p;
     p = Phaser.Math.Clamp(p, 0, AREAS.length - 1);
     const i = Math.min(Math.floor(p), AREAS.length - 2);
@@ -517,7 +581,7 @@ export class Level2Scene extends Phaser.Scene {
     const bob = Math.sin(time / 300) * 6;
     const inBoss = p.z > this.track.bossStart && p.z < this.track.bossEnd;
     if (!this.finished) {
-      const target = UFO_SCALE[Math.min(this.cpIndex, UFO_SCALE.length - 1)] * (inBoss ? 1 + Math.sin(time / 200) * 0.05 : 1);
+      const target = UFO_SCALE[this.sectionStyle()] *(inBoss ? 1 + Math.sin(time / 200) * 0.05 : 1);
       const sc = this.ufo.scale + (target - this.ufo.scale) * Math.min(1, dt * 2);
       const wobble = inBoss ? Math.sin(time / 500) * 60 : 0;
       this.ufo.setPosition(this.cx - camX * 20 + wobble, this.cy - 30 + bob).setScale(sc);
@@ -539,7 +603,6 @@ export class Level2Scene extends Phaser.Scene {
     // which windy stretches are on screen, so the tiles there can show the wind blowing across them
     const visWinds = this.finished ? [] : this.track.winds.filter((w) => w.end > first && w.start < last);
     const windDirAt = (r) => { for (const w of visWinds) if (r >= w.start && r < w.end) return w.dir; return 0; };
-    const chevPhase = (time * 0.0024) % 1;
 
     // draws one tile from row zStart to row zEnd (1 or 2 rows long) in lane l
     const drawTile = (zStart, zEnd, l, type) => {
@@ -549,29 +612,21 @@ export class Level2Scene extends Phaser.Scene {
       if (z0 - camZ < NEAR) z0 = camZ + NEAR;
       const fog = Phaser.Math.Clamp((z0 - camZ - 6) / (VIEW_ROWS - 6), 0, 1);
       const [a, b] = edges[l];
-      let base = (Math.floor(r / 2) + l) % 2 ? col.tileA : col.tileB;
+      let base = (PATTERNS[col.pattern] || PATTERNS.checker)(r, l) ? col.tileA : col.tileB;
       if (type === PAD) base = 0x1f4f86; // pond water under the lily pad
       if (type === CRACKED) base = mix(base, 0x2a1a10, 0.45);
       if (type === CRACKED && this.crumbling.has(`${r},${l}`)) base = flash ? 0xff3b3b : 0xffffff; // about to fall!
       if (cpSet.has(r) || cpSet.has(r - 1)) base = 0x3ddc84;
       if (r >= this.track.finishRow && r < this.track.finishRow + 2) base = (l % 2) ? 0xffffff : 0x222222;
       const wd = windDirAt(r);
-      // WIND: bright gust waves sweep around the tunnel in the wind's direction
-      if (wd && type !== PAD) base = mix(base, 0x1a6f9a, 0.55 * Math.max(0, Math.sin(time * 0.009 - l * 0.6 * wd)));
+      // WIND: a glowing shimmer (like an aurora) ripples diagonally across the tiles in the wind's direction
+      if (wd && type !== PAD) {
+        const wave = Math.max(0, Math.sin(time * 0.008 - l * 0.55 * wd + r * 0.3));
+        base = mix(base, col.windGlow ?? 0xc8f6ff, 0.6 * wave * wave);
+      }
       const p1 = proj(a.x, a.y, z0), p2 = proj(b.x, b.y, z0), p3 = proj(b.x, b.y, z1), p4 = proj(a.x, a.y, z1);
       g.fillStyle(mix(base, fogCol, fog * fog), 1);
       g.fillPoints([p1, p2, p3, p4], true);
-      if (wd && type !== PAD && fog < 0.85) {
-        // ...and arrows painted on the floor march sideways with the wind (you can see the windy part coming)
-        const at = (s, t) => ({
-          x: (p1.x * (1 - s) + p2.x * s) * (1 - t) + (p4.x * (1 - s) + p3.x * s) * t,
-          y: (p1.y * (1 - s) + p2.y * s) * (1 - t) + (p4.y * (1 - s) + p3.y * s) * t,
-        });
-        const tip = wd > 0 ? chevPhase : 1 - chevPhase;
-        const S = (k) => Phaser.Math.Clamp(tip - wd * k, 0, 1);
-        g.fillStyle(0x0b2f44, 0.7 * (1 - fog) * Math.sin(Math.PI * chevPhase));
-        g.fillPoints([at(S(0.3), 0.15), at(S(0), 0.5), at(S(0.3), 0.85), at(S(0.55), 0.85), at(S(0.25), 0.5), at(S(0.55), 0.15)], true);
-      }
       if (type === PAD) {
           // A round lily pad lying on the tile, with a notch cut out and a little pink flower.
           // at(s, t) finds a point on the tile: s goes across (0..1), t goes along the tunnel (0..1)
@@ -731,6 +786,45 @@ export class Level2Scene extends Phaser.Scene {
       fx.fillCircle(s.x + Math.cos(r.spin + 2.5) * rad * 0.4, s.y + Math.sin(r.spin + 2.5) * rad * 0.4, rad * 0.15);
       fx.fillStyle(0xa8988a, 1); fx.fillCircle(s.x - rad * 0.3, s.y - rad * 0.35, rad * 0.18);
     }
+    // --- CANDY: striped candy canes and shiny gumdrops standing on the tiles (far ones first) ---
+    const props = this.track.props || [];
+    for (let k = props.length - 1; k >= 0; k--) {
+      const c = props[k];
+      const dz = c.z - camZ;
+      if (dz < NEAR + 0.4 || dz > VIEW_ROWS * 0.85) continue;
+      const fade = 1 - Phaser.Math.Clamp((dz - 6) / (VIEW_ROWS * 0.85 - 6), 0, 1) * 0.8;
+      const at = (du, h) => { const q = rot(wallPoint(c.lane + 0.5 + du, h)); return proj(q.x, q.y, c.z); };
+      const unit = FOCAL / dz; // pixels per tile at this distance
+      const foot = at(0, 0);
+      fx.fillStyle(0x000000, 0.25 * fade); fx.fillEllipse(foot.x, foot.y, unit * 0.6, unit * 0.18);
+      if (c.kind === 'cane') {
+        // red and white striped pole with a hook on top
+        const H = 1.0, seg = 5;
+        for (let s = 0; s < seg; s++) {
+          const a = at(0, (s / seg) * H), b = at(0, ((s + 1) / seg) * H);
+          fx.lineStyle(unit * 0.16, s % 2 ? 0xffffff : 0xff2e4d, fade);
+          fx.lineBetween(a.x, a.y, b.x, b.y);
+        }
+        let prev = at(0, H);
+        for (let s = 1; s <= 6; s++) {
+          const ang = (s / 6) * Math.PI;
+          const q = at(0.2 - 0.2 * Math.cos(ang), H + 0.2 * Math.sin(ang));
+          fx.lineStyle(unit * 0.16, s % 2 ? 0xff2e4d : 0xffffff, fade);
+          fx.lineBetween(prev.x, prev.y, q.x, q.y);
+          prev = q;
+        }
+      } else {
+        // a round gumdrop with sugar sparkles
+        const col = [0xff5fb8, 0x6dff8a, 0xb46bff, 0xffa53c][Math.floor(c.seed * 4)];
+        const mid = at(0, 0.3);
+        fx.fillStyle(mix(col, 0x000000, 0.25), fade); fx.fillEllipse(mid.x, mid.y + unit * 0.06, unit * 0.8, unit * 0.64);
+        fx.fillStyle(col, fade); fx.fillEllipse(mid.x, mid.y, unit * 0.76, unit * 0.6);
+        fx.fillStyle(0xffffff, 0.75 * fade); fx.fillEllipse(mid.x - unit * 0.12, mid.y - unit * 0.1, unit * 0.14, unit * 0.09);
+        fx.fillStyle(0xffffff, 0.9 * fade);
+        for (let s = 0; s < 4; s++) fx.fillRect(mid.x + Math.cos(s * 1.7 + c.seed * 9) * unit * 0.18, mid.y + Math.sin(s * 2.3) * unit * 0.12, Math.max(1, unit * 0.03), Math.max(1, unit * 0.03));
+      }
+    }
+
     // --- BREAD CRUMBS floating in the tunnel ---
     for (const c of this.crumbItems) {
       const show = !c.got && c.z > camZ + 1 && c.z < camZ + VIEW_ROWS * 0.7;
@@ -910,14 +1004,20 @@ export class Level2Scene extends Phaser.Scene {
     this.hintText.setText('');
     this.warnText.setText('');
     this.bullets.length = 0; this.lasers.length = 0;
-    this.tweens.add({ targets: [this.ufo, this.bread], scale: 1.1, y: this.cy - 110, duration: 1500, ease: 'Cubic.out' });
     const demo = this.mode === 'demo';
+    const n = this.storyIndex;
+    const last = demo || n === STORY.length - 1; // the last level: you catch the UFO
+    if (last) this.tweens.add({ targets: [this.ufo, this.bread], scale: 1.1, y: this.cy - 110, duration: 1500, ease: 'Cubic.out' });
+    else this.tweens.add({ targets: [this.ufo, this.bread], scale: 0.05, duration: 1500, ease: 'Cubic.in' }); // it zooms off ahead
+    const lines = ['The UFO speeds deeper into the tunnel...', 'So close! The UFO is right ahead!', 'Crumb caught the UFO... but who is flying it?'];
     levelCompletePanel(this, {
-      title: demo ? 'Demo complete!' : 'Level 2 complete!', secs: this.elapsed / 1000,
-      limits: demo ? [40, 60] : STAR_LIMITS, levelKey: demo ? 'demo2' : 'level2',
-      line: 'Crumb caught the UFO... but who is flying it?',
+      title: demo ? 'Demo complete!' : `Level ${n + 1} complete!`, secs: this.elapsed / 1000,
+      limits: demo ? [82, 100] : STAR_LIMITS[this.stage - 1], levelKey: demo ? 'demo2' : `story${n + 1}`,
+      line: demo ? lines[2] : lines[this.stage - 1],
       crumbs: { got: this.crumbs.got, total: this.crumbs.total },
-      onDone: () => this.scene.start('Cutscene', { id: 'ending', next: 'Menu', fast: demo }),
+      onDone: () => (demo
+        ? this.scene.start('Cutscene', { id: 'ending', next: 'Menu', fast: true })
+        : startStoryLevel(this, n + 1)), // the last level goes on to the ending
     });
   }
 }

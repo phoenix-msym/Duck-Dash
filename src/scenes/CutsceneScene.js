@@ -42,7 +42,9 @@ export class CutsceneScene extends Phaser.Scene {
     const { width: W0, height: H0 } = this.scale;
     this.uiObjects = new Set();
     this.uiCam = this.cameras.add(0, 0, W0, H0);
-    this.events.on('postupdate', () => this.sortCameras());
+    const sort = () => this.sortCameras();
+    this.events.on('postupdate', sort);
+    this.events.once('shutdown', () => this.events.off('postupdate', sort)); // don't pile up one per cutscene
     this.actors = {};    // who to bounce when they talk: { Crumb: sprite, Pigeon: sprite, ... }
     this.shadows = [];   // [{ obj, shadow }] soft shadows that follow characters
     this.makeDialogueBox();
@@ -319,8 +321,10 @@ export class CutsceneScene extends Phaser.Scene {
     this.arrow.setVisible(false);
     let shown = 0;
     return new Promise((resolve) => {
+      // (the clock runs faster in Demo mode, so stretch the delay: the text still types at normal speed)
+      const timeScale = this.time.timeScale || 1;
       const typer = this.time.addEvent({
-        delay: 28, repeat: text.length - 1,
+        delay: 28 * timeScale, repeat: text.length - 1,
         callback: () => {
           shown++;
           this.lineText.setText(text.slice(0, shown));
@@ -338,9 +342,12 @@ export class CutsceneScene extends Phaser.Scene {
         this.box.setVisible(false);
         this.stillPlaying(resolve)();
       };
-      // fast (Demo) cutscenes move on to the next line by themselves after a short read
+      // fast (Demo) cutscenes move on to the next line by themselves, after enough time to read it:
+      // 1.6 seconds plus a little more for every letter (at most 4.5 seconds), in real time
       const autoNext = () => {
-        if (this.fast) this.time.delayedCall(1500, () => { if (this.onAdvance === next) next(); });
+        if (!this.fast) return;
+        const readMs = Math.min(4500, 1600 + text.length * 40) * timeScale;
+        this.time.delayedCall(readMs, () => { if (this.onAdvance === next) next(); });
       };
       this.onAdvance = next;
     });
