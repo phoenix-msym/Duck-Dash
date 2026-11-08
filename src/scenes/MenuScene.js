@@ -1,5 +1,5 @@
 import { makeTextures } from '../art.js';
-import { makeButton, keyboardMenu, sunsetBackdrop, fullscreenButton, FONT } from '../ui.js';
+import { makeButton, keyboardMenu, sunsetBackdrop, fullscreenIcon, FONT } from '../ui.js';
 import { audio } from '../audio.js';
 import { wallet } from '../wallet.js';
 import { menuScenery } from '../scenery.js';
@@ -53,9 +53,9 @@ export class MenuScene extends Phaser.Scene {
       makeButton(this, W / 2, 330, 'Play', () => this.scene.start('Modes')), // Story / Endless / Demo
       makeButton(this, W / 2, 410, `Bread Shop  (${wallet.crumbs})`, () => this.scene.start('Shop')),
       makeButton(this, W / 2, 490, 'Settings', () => this.scene.start('Settings')),
-      fullscreenButton(this, W / 2, 570),
     ];
     keyboardMenu(this, buttons);
+    fullscreenIcon(this, 16, 16, 52); // small fullscreen icon in the top left corner
 
     this.add.text(W / 2, H - 28, 'W/S or mouse to choose  •  Enter to press  •  F = fullscreen', {
       fontFamily: FONT, fontSize: '18px', color: '#fff4dc',

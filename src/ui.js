@@ -24,6 +24,44 @@ export function fullscreenButton(scene, x, y, opts = {}) {
   return b;
 }
 
+// A small square icon button (four corner brackets) for the corner of a screen.
+// The corners point out for "go fullscreen" and point in for "exit fullscreen".
+export function fullscreenIcon(scene, x = 16, y = 16, size = 52) {
+  const g = scene.add.graphics().setDepth(60).setScrollFactor(0);
+  const zone = scene.add.zone(x, y, size, size).setOrigin(0).setScrollFactor(0).setDepth(61)
+    .setInteractive({ useHandCursor: true });
+  let hover = false;
+  const draw = () => {
+    g.clear();
+    g.fillStyle(0x3b1d4a, hover ? 0.95 : 0.75).fillRoundedRect(x, y, size, size, 10);
+    g.lineStyle(3, 0xfff4dc, 1).strokeRoundedRect(x, y, size, size, 10);
+    const pad = size * 0.24, arm = size * 0.2, l = x + pad, r = x + size - pad, t = y + pad, b = y + size - pad;
+    const inward = scene.scale.isFullscreen;
+    g.lineStyle(4, hover ? 0xffd23f : 0xfff4dc, 1);
+    // each corner: [corner x, corner y, x direction, y direction]
+    for (const [cx, cy, dx, dy] of [[l, t, 1, 1], [r, t, -1, 1], [l, b, 1, -1], [r, b, -1, -1]]) {
+      const px = inward ? cx + dx * arm : cx, py = inward ? cy + dy * arm : cy; // the bend of the bracket
+      const sx = inward ? -dx : dx, sy = inward ? -dy : dy;
+      g.beginPath();
+      g.moveTo(px + sx * arm, py);
+      g.lineTo(px, py);
+      g.lineTo(px, py + sy * arm);
+      g.strokePath();
+    }
+  };
+  zone.on('pointerover', () => { hover = true; draw(); });
+  zone.on('pointerout', () => { hover = false; draw(); });
+  zone.on('pointerdown', () => { audio.sfx.click(); toggleFullscreen(scene); });
+  scene.scale.on('enterfullscreen', draw);
+  scene.scale.on('leavefullscreen', draw);
+  scene.events.once('shutdown', () => {
+    scene.scale.off('enterfullscreen', draw);
+    scene.scale.off('leavefullscreen', draw);
+  });
+  draw();
+  return { g, zone };
+}
+
 // ------------------------------------------------------------------ "erase" effect when Crumb dies
 // The picture wipes away from the top down, and little yellow bits fly off the wiping edge.
 // sprites: the images to erase (the first one sets where the bits come from).

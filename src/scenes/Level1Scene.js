@@ -12,8 +12,9 @@ import { level1Scenery } from '../scenery.js';
 const MAX_WHEEL_SPIN = 1.1;   // top speed (was 1.3)
 const WHEEL_ACCEL = 0.05;     // how fast it speeds up (was 0.06)
 const HILL_PUSH = 0.0005;     // extra push along the ground while riding (stops it bogging down on hills)
-const DOWNFORCE = 0.0011;
-const FALL_DEPTH = 220;       // how far below a gap's edge you fall before "Splat!" (bigger = falls deeper)     // presses the bike onto the ground while riding, so it doesn't hop over bumps
+const DOWNFORCE = 0.0011;     // presses the bike onto the ground while riding, so it doesn't hop over bumps
+const ANTI_HOP = 0.7;     // how much of a bounce off the ground gets soaked up each frame (0 = none, 1 = all)
+const FALL_DEPTH = 220;       // how far below a gap's edge you fall before "Splat!" (bigger = falls deeper)
 const AIR_DRAG = 0.0015;      // low air drag = Crumb keeps his momentum (the default is 0.01)
 const STAR_LIMITS = [48, 70]; // seconds: under the first = 3 stars, under the second = 2 stars (course is longer now)
 const BRAKE_SPIN = -0.25;     // S makes it slow down / roll back a bit
@@ -307,11 +308,12 @@ export class Level1Scene extends Phaser.Scene {
     const axle = (wheel) => Constraint.create({
       bodyA: chassis,
       pointA: { x: wheel.position.x - chassis.position.x, y: wheel.position.y - chassis.position.y },
-      bodyB: wheel, length: 0, stiffness: 0.3, damping: 0.3, // softer, less bouncy suspension
+      bodyB: wheel, length: 0, stiffness: 0.3, damping: 0.3, // soft suspension
     });
     const all = [chassis, back, front, axle(back), axle(front)];
     this.matter.world.add(all);
     this.bike = { chassis, frame, head, back, front, all };
+    this.wheelContacts = new Map([[back, new Set()], [front, new Set()]]);
     this.crashed = false;
     this.stuckCheck = null;
     unerase([this.bikeImg, this.backWheelImg, this.frontWheelImg]);
@@ -335,8 +337,14 @@ export class Level1Scene extends Phaser.Scene {
         if (!o || o.label !== 'ground') continue;
         if (part === this.bike.head) {
           if (starting) this.crash();
-        } else if (starting) this.wheelsTouching.add(part);
-        else this.wheelsTouching.delete(part);
+          continue;
+        }
+        // remember EVERY piece of ground each wheel touches. Rolling from one piece onto the next, the
+        // "stopped touching the old piece" message can come after "touching the new piece", and that
+        // used to make the game think the wheel was in the air for a moment (tiny hops, lost grip).
+        const set = this.wheelContacts.get(part);
+        if (starting) set.add(o); else set.delete(o);
+        if (set.size > 0) this.wheelsTouching.add(part); else this.wheelsTouching.delete(part);
       }
     }
   }
@@ -457,6 +465,22 @@ export class Level1Scene extends Phaser.Scene {
     if (!this.crashed && this.wheelsTouching.size > 0) {
       const d = DOWNFORCE * chassis.mass;
       Body.applyForce(chassis, chassis.position, { x: -Math.sin(chassis.angle) * d, y: Math.cos(chassis.angle) * d });
+      // ANTI-HOP: the springs bounce the wheels up at the bottom of hills and after landings. While they're
+      // down, soak up most of each wheel's speed going straight AWAY from the ground (not along it), so the
+      // bike stays on the hill. Ramp jumps still work: they launch you ALONG the ramp, not away from it.
+      // Only on flat ground and in dips (where the bounces happen), never over the top of a hill, where
+      // floating off a little is natural and squashing it would slow the bike down.
+      // (each wheel checks the ground right under itself, so a wheel starting up a hill isn't held back)
+      for (const body of [back, front]) {
+        const px = body.position.x;
+        const yA = groundYAt(this.track, px - 25), yB = groundYAt(this.track, px + 25), yM = groundYAt(this.track, px);
+        if (yA === null || yB === null || yM === null || 2 * yM - yA - yB < -0.5) continue;
+        const len = Math.hypot(50, yB - yA);
+        const nx = (yB - yA) / len, ny = -50 / len; // "up" out of the ground here
+        const v = body.velocity;
+        const away = v.x * nx + v.y * ny;
+        if (away > 0) Body.setVelocity(body, { x: v.x - nx * away * ANTI_HOP, y: v.y - ny * away * ANTI_HOP });
+      }
     }
 
     // engine hum follows wheel speed; a thud when you land after a jump

@@ -245,7 +245,16 @@ export class Level2Scene extends Phaser.Scene {
     p.z += speed * dt;
     p.u += (c.right - c.left) * SIDE_SPEED * dt;
     const wind = this.windAt(p.z);
-    if (wind) p.u += wind.dir * WIND * dt;
+    if (wind) {
+      p.u += wind.dir * WIND * dt;
+      // gusts: a whoosh and a little camera shake every so often, so the wind feels dangerous
+      this.gustTimer = (this.gustTimer ?? 0) - dt;
+      if (this.gustTimer <= 0) {
+        this.gustTimer = 0.7;
+        audio.sfx.whoosh();
+        this.cameras.main.shake(180, 0.004);
+      }
+    } else this.gustTimer = 0;
 
     if (p.grounded) {
       const under = this.tileAt(p.z, p.u);
@@ -527,6 +536,10 @@ export class Level2Scene extends Phaser.Scene {
     // far-away tiles fade towards a DARK colour (not the sky colour), so tiles never blend into the background
     const fogCol = mix(col.bgTop, 0x000000, 0.35);
     const special = (r) => cpSet.has(r) || cpSet.has(r - 1) || (r >= this.track.finishRow && r < this.track.finishRow + 2);
+    // which windy stretches are on screen, so the tiles there can show the wind blowing across them
+    const visWinds = this.finished ? [] : this.track.winds.filter((w) => w.end > first && w.start < last);
+    const windDirAt = (r) => { for (const w of visWinds) if (r >= w.start && r < w.end) return w.dir; return 0; };
+    const chevPhase = (time * 0.0024) % 1;
 
     // draws one tile from row zStart to row zEnd (1 or 2 rows long) in lane l
     const drawTile = (zStart, zEnd, l, type) => {
@@ -542,9 +555,23 @@ export class Level2Scene extends Phaser.Scene {
       if (type === CRACKED && this.crumbling.has(`${r},${l}`)) base = flash ? 0xff3b3b : 0xffffff; // about to fall!
       if (cpSet.has(r) || cpSet.has(r - 1)) base = 0x3ddc84;
       if (r >= this.track.finishRow && r < this.track.finishRow + 2) base = (l % 2) ? 0xffffff : 0x222222;
+      const wd = windDirAt(r);
+      // WIND: bright gust waves sweep around the tunnel in the wind's direction
+      if (wd && type !== PAD) base = mix(base, 0x1a6f9a, 0.55 * Math.max(0, Math.sin(time * 0.009 - l * 0.6 * wd)));
       const p1 = proj(a.x, a.y, z0), p2 = proj(b.x, b.y, z0), p3 = proj(b.x, b.y, z1), p4 = proj(a.x, a.y, z1);
       g.fillStyle(mix(base, fogCol, fog * fog), 1);
       g.fillPoints([p1, p2, p3, p4], true);
+      if (wd && type !== PAD && fog < 0.85) {
+        // ...and arrows painted on the floor march sideways with the wind (you can see the windy part coming)
+        const at = (s, t) => ({
+          x: (p1.x * (1 - s) + p2.x * s) * (1 - t) + (p4.x * (1 - s) + p3.x * s) * t,
+          y: (p1.y * (1 - s) + p2.y * s) * (1 - t) + (p4.y * (1 - s) + p3.y * s) * t,
+        });
+        const tip = wd > 0 ? chevPhase : 1 - chevPhase;
+        const S = (k) => Phaser.Math.Clamp(tip - wd * k, 0, 1);
+        g.fillStyle(0x0b2f44, 0.7 * (1 - fog) * Math.sin(Math.PI * chevPhase));
+        g.fillPoints([at(S(0.3), 0.15), at(S(0), 0.5), at(S(0.3), 0.85), at(S(0.55), 0.85), at(S(0.25), 0.5), at(S(0.55), 0.15)], true);
+      }
       if (type === PAD) {
           // A round lily pad lying on the tile, with a notch cut out and a little pink flower.
           // at(s, t) finds a point on the tile: s goes across (0..1), t goes along the tunnel (0..1)
@@ -713,13 +740,65 @@ export class Level2Scene extends Phaser.Scene {
       const s = proj(pt.x, pt.y, c.z);
       c.img.setPosition(s.x, s.y).setScale((0.55 * FOCAL) / (c.z - camZ) / 40).setAngle(Math.sin(time / 300 + c.z) * 15);
     }
+    // --- WIND IN THE TUNNEL: streaks of dust and leaves whipping around the tube inside every windy
+    // stretch. They live at real spots in the tunnel, so you can see the windy part coming from far away.
+    for (const w of this.track.winds) {
+      if (this.finished || p.z < w.start - VIEW_ROWS - 5 || p.z > w.end + 5) { w.bits = null; continue; }
+      if (!w.bits) {
+        w.bits = [];
+        const n = Math.round((w.end - w.start) * 2.2);
+        for (let i = 0; i < n; i++) {
+          w.bits.push({
+            u: Math.random() * LANES, z: w.start + Math.random() * (w.end - w.start),
+            h: 0.15 + Math.random() * 1.8, sp: 6 + Math.random() * 6, leaf: Math.random() < 0.3,
+          });
+        }
+      }
+      for (const b of w.bits) {
+        b.u += w.dir * b.sp * dt;
+        const dz = b.z - camZ;
+        if (dz < NEAR + 0.6 || dz > VIEW_ROWS * 0.85) continue;
+        const fade = 1 - dz / (VIEW_ROWS * 0.85);
+        const hp = rot(wallPoint(b.u, b.h)), tp = rot(wallPoint(b.u - w.dir * 1.4, b.h));
+        const head = proj(hp.x, hp.y, b.z), tail = proj(tp.x, tp.y, b.z);
+        const thick = Math.max(1.5, (0.07 * FOCAL) / dz);
+        if (b.leaf) {
+          // a little tumbling leaf
+          const sz = thick * 2.2, a = time / 70 + b.z;
+          fx.fillStyle(0x8fe36a, 0.9 * fade);
+          fx.fillTriangle(head.x + Math.cos(a) * sz, head.y + Math.sin(a) * sz,
+            head.x - Math.cos(a) * sz, head.y - Math.sin(a) * sz,
+            head.x + Math.cos(a + 1.6) * sz * 0.5, head.y + Math.sin(a + 1.6) * sz * 0.5);
+        } else {
+          // dark streak with a bright core, so it shows up on both light and dark tiles
+          fx.lineStyle(thick * 1.8, 0x0b2f44, 0.6 * fade);
+          fx.lineBetween(tail.x, tail.y, head.x, head.y);
+          fx.lineStyle(thick * 0.7, 0xffffff, 0.9 * fade);
+          fx.lineBetween(tail.x, tail.y, head.x, head.y);
+        }
+      }
+    }
+
     const wind = this.windAt(p.z);
     if (wind && !this.finished) {
-      fx.lineStyle(3, 0xffffff, 0.25);
-      for (let i = 0; i < 18; i++) {
-        const y = ((i * 97) % H);
-        const x = ((time * 1.2 * wind.dir + i * 211) % (W + 200) + W + 200) % (W + 200) - 100;
-        fx.lineBetween(x, y, x - wind.dir * 120, y);
+      // WIND: a cold blue tint that pulses with each gust, plus lots of fast streaks and flying specks
+      const gust = 0.5 + 0.5 * Math.sin(time / 260);
+      fx.fillStyle(0x0a2a4a, 0.08 + gust * 0.12); // the screen darkens like a storm with each gust
+      fx.fillRect(0, 0, W, H);
+      for (let i = 0; i < 46; i++) {
+        const y = (i * 73 + Math.sin(time / 300 + i) * 18) % H;
+        const speed = 1.6 + (i % 5) * 0.35;
+        const len = 120 + (i % 4) * 70;
+        const x = ((time * speed * wind.dir + i * 211) % (W + 400) + W + 400) % (W + 400) - 200;
+        const thick = i % 3 === 0 ? 5 : 3;
+        fx.lineStyle(thick, i % 2 ? 0xffffff : 0x0b2f44, 0.35 + gust * 0.35);
+        fx.lineBetween(x, y, x - wind.dir * len, y + Math.sin(i) * 10);
+      }
+      fx.fillStyle(0xffffff, 0.8);
+      for (let i = 0; i < 30; i++) {
+        const y = (i * 131) % H;
+        const x = ((time * 2.4 * wind.dir + i * 157) % (W + 100) + W + 100) % (W + 100) - 50;
+        fx.fillRect(x, y + Math.sin(time / 120 + i) * 6, 4, 3);
       }
     }
 
@@ -734,7 +813,10 @@ export class Level2Scene extends Phaser.Scene {
         frame = Math.floor(this.runAnim) % 2 ? 'duckRunA' : 'duckRunB';
       }
       const sideRoll = this.roll - this.targetRoll; // tilt with the tunnel while it is turning
-      this.duck.setTexture(frame).setPosition(feet.x, feet.y).setScale(scale).setRotation(sideRoll);
+      // in the wind Crumb leans hard into it
+      const windNow = this.windAt(p.z);
+      const windLean = windNow && !this.finished ? -windNow.dir * (0.22 + Math.sin(time / 90) * 0.05) : 0;
+      this.duck.setTexture(frame).setPosition(feet.x, feet.y).setScale(scale).setRotation(sideRoll + windLean);
       // once Crumb drops below the floor (through a hole) he's gone from view; otherwise he'd look like
       // he's still standing on the tiles
       this.duck.setVisible(p.h > -0.2);
@@ -760,7 +842,7 @@ export class Level2Scene extends Phaser.Scene {
     this.toast = this.add.text(W / 2, 150, '', { ...style, fontSize: '40px', fontStyle: 'bold' })
       .setOrigin(0.5).setDepth(50).setAlpha(0);
     this.warnText = this.add.text(W / 2, 240, '', {
-      ...style, fontSize: '46px', fontStyle: 'bold', color: '#ff4a4a', stroke: '#ffffff', strokeThickness: 6,
+      ...style, fontSize: '44px', fontStyle: 'bold', color: '#ff3b3b', stroke: '#ffffff', strokeThickness: 7, align: 'center',
     }).setOrigin(0.5).setDepth(51);
   }
 
@@ -807,8 +889,15 @@ export class Level2Scene extends Phaser.Scene {
     const soon = this.track.winds.find((w) => p.z > w.start - 30 && p.z < w.end);
     if (soon && !this.finished) {
       const arrow = soon.dir > 0 ? '→ → →' : '← ← ←';
-      this.warnText.setText(p.z < soon.start ? `⚠ WARNING: WIND ⚠\n${arrow}` : arrow).setAlpha(blink ? 1 : 0.35);
-    } else this.warnText.setText('');
+      const lean = soon.dir > 0 ? 'LEAN LEFT!' : 'LEAN RIGHT!';
+      const before = p.z < soon.start;
+      this.warnText.setText(before ? `⚠ WARNING: WIND ⚠\n${arrow}` : `${arrow}  ${lean}  ${arrow}`)
+        .setAlpha(blink ? 1 : 0.45)
+        .setScale(1 + Math.sin(now * 12) * 0.06); // pulsing, so it really grabs your attention
+      // a warning siren beep just before the wind hits
+      if (before && blink && !this.windBeep) { audio.sfx.select(); this.windBeep = true; }
+      if (!blink) this.windBeep = false;
+    } else this.warnText.setText('').setScale(1);
   }
 
   finish() {
