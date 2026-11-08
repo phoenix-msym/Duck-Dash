@@ -2,8 +2,8 @@ import { makeTextures } from '../art.js';
 import { createControls } from '../controls.js';
 import { settings } from '../settings.js';
 import { gyro } from '../gyro.js';
-import { buildLevel1, buildLevel1Demo, groundYAt } from '../level1Track.js';
-import { FONT, eraseSprites, unerase, levelCompletePanel, crumbHud, levelTitle, checkpointBarClicks, savedCheckpoint, saveCheckpoint } from '../ui.js';
+import { buildLevel1, buildLevel1Demo, makeEndlessBikeTrack, groundYAt } from '../level1Track.js';
+import { FONT, eraseSprites, unerase, levelCompletePanel, crumbHud, levelTitle, checkpointBarClicks, savedCheckpoint, saveCheckpoint, fmtTime, makeButton, keyboardMenu } from '../ui.js';
 import { STORY, storyIndex, startStoryLevel } from '../story.js';
 import { audio } from '../audio.js';
 import { addPauseButton } from './PauseScene.js';
@@ -45,16 +45,18 @@ export class Level1Scene extends Phaser.Scene {
   constructor() { super('Level1'); }
 
   // mode: 'story' (normal) or 'demo' (short showcase course). stage: which bike level of the story (1-3)
+  // mode 'endless' = BIKE RUSH: a course that never ends, one life
   init(data) {
     this.mode = (data && data.mode) || 'story';
     this.stage = (data && data.stage) || 1;
+    this.endless = this.mode === 'endless';
   }
 
   create() {
     makeTextures(this);
     this.controls = createControls(this);
-    this.track = this.mode === 'demo' ? buildLevel1Demo() : buildLevel1(this.stage);
-    this.storyIndex = this.mode === 'demo' ? -1 : storyIndex('Level1', this.stage);
+    this.track = this.endless ? makeEndlessBikeTrack() : this.mode === 'demo' ? buildLevel1Demo() : buildLevel1(this.stage);
+    this.storyIndex = this.mode === 'story' ? storyIndex('Level1', this.stage) : -1;
     this.cpIndex = 0;
     this.crashed = false;
     this.finished = false;
@@ -67,6 +69,7 @@ export class Level1Scene extends Phaser.Scene {
     this.makeBackground();
     this.makeGround();
     this.makeFlagsAndSigns();
+    this.crumbs = null; // forget the crumb counter from a previous run (it was destroyed with the old scene)
     this.makePickups();
     this.scenery = level1Scenery(this, this.track); // pond, fence, hay, clouds, trees, birds, moon...
     this.makeBikeSprites();
@@ -75,8 +78,12 @@ export class Level1Scene extends Phaser.Scene {
     this.crumbs = crumbHud(this, { fixed: true, total: this.crumbItems.length });
 
     const allY = this.track.pieces.flat().map((p) => p.y);
-    this.deathY = Math.max(...allY) + 500;
-    this.cameras.main.setBounds(-700, Math.min(...allY) - 1200, this.track.finishX + 1400, this.deathY + 1400 - (Math.min(...allY) - 1200));
+    if (this.endless) {
+      this.deathY = Infinity; // (Bike Rush: the course keeps going, so there's no bottom of the world or camera edge)
+    } else {
+      this.deathY = Math.max(...allY) + 500;
+      this.cameras.main.setBounds(-700, Math.min(...allY) - 1200, this.track.finishX + 1400, this.deathY + 1400 - (Math.min(...allY) - 1200));
+    }
     this.cameras.main.startFollow(this.bikeImg, true, 0.12, 0.12, -260, 80);
 
     this.feathers = this.add.particles(0, 0, 'feather', {
@@ -87,7 +94,10 @@ export class Level1Scene extends Phaser.Scene {
     this.matter.world.on('collisionstart', (e) => this.onCollision(e, true));
     this.matter.world.on('collisionend', (e) => this.onCollision(e, false));
 
-    this.input.keyboard.on('keydown-R', () => { if (!this.finished) this.respawn(); });
+    this.input.keyboard.on('keydown-R', () => {
+      if (this.endless) this.scene.restart({ mode: 'endless' }); // Bike Rush: R = start a new run
+      else if (!this.finished) this.respawn();
+    });
     addPauseButton(this, true); // P / Esc / the II button
     if (this.storyIndex >= 0) levelTitle(this, this.storyIndex + 1, STORY[this.storyIndex].name);
   }
@@ -126,6 +136,8 @@ export class Level1Scene extends Phaser.Scene {
     }
     // story levels each use their own part of the sky (sunset -> night), set in level1Track.js
     if (this.track.sky) p = this.track.sky[0] + (p / cps.length) * (this.track.sky[1] - this.track.sky[0]);
+    // Bike Rush: the sky slowly goes from sunset to night and back again as you ride
+    if (this.endless) { const k = (x / 15000) % 8; p = k > 4 ? 8 - k : k; }
     p = Phaser.Math.Clamp(p, 0, SKIES.length - 1);
     const i = Math.min(Math.floor(p), SKIES.length - 2), t = p - i;
     const a = SKIES[i], b = SKIES[i + 1];
@@ -158,21 +170,31 @@ export class Level1Scene extends Phaser.Scene {
 
   // ------------------------------------------------------------------ ground
   makeGround() {
-    const g = this.add.graphics().setDepth(0);
+    this.groundPieces = []; // { g, bodies, endX } for every piece of ground built so far
+    this.buildGround();
+  }
+
+  // Builds the picture and physics for any pieces of ground that aren't built yet. (Bike Rush calls this
+  // again every time the course grows.)
+  buildGround() {
     const THICK = 40;
     const pieces = this.track.pieces;
-    pieces.forEach((piece, n) => {
+    for (let n = this.groundPieces.length; n < pieces.length; n++) {
+      const piece = pieces[n];
+      const g = this.add.graphics().setDepth(0);
+      const bodies = [];
       // invisible cliff walls at the edges of each gap, so a short landing
       // slides you down into the gap instead of getting hooked on the corner
-      const wall = (x, y) => this.matter.add.rectangle(x, y + 8 + 1000, 20, 2000, {
+      const wall = (x, y) => bodies.push(this.matter.add.rectangle(x, y + 8 + 1000, 20, 2000, {
         isStatic: true, label: 'ground', friction: 0,
-      });
+      }));
       if (n > 0) wall(piece[0].x + 10, piece[0].y);
-      if (n < pieces.length - 1) wall(piece[piece.length - 1].x - 10, piece[piece.length - 1].y);
-    });
-    for (const piece of pieces) {
-      // picture: dirt filled down to the bottom, grass line on top
-      const bottom = 3000;
+      // (every Bike Rush piece ends at a gap; in the other modes the last piece runs past the finish)
+      if (this.endless || n < pieces.length - 1) wall(piece[piece.length - 1].x - 10, piece[piece.length - 1].y);
+      this.groundPieces.push({ g, bodies, endX: piece[piece.length - 1].x });
+
+      // picture: dirt filled down to well below the lowest point, grass line on top
+      const bottom = Math.max(...piece.map((p) => p.y)) + 2500;
       g.fillStyle(0x5b3550);
       g.fillPoints([{ x: piece[0].x, y: bottom }, ...piece, { x: piece[piece.length - 1].x, y: bottom }], true);
       g.lineStyle(14, 0x4fbf6a);
@@ -190,9 +212,28 @@ export class Level1Scene extends Phaser.Scene {
         const cx = (a.x + c.x) / 2 + nx * THICK / 2, cy = (a.y + c.y) / 2 + ny * THICK / 2;
         // exactly the segment's length: making them longer left tiny "steps" where the ground bends up,
         // which bounced the bike into the air when powering uphill
-        this.matter.add.rectangle(cx, cy, len, THICK, {
+        bodies.push(this.matter.add.rectangle(cx, cy, len, THICK, {
           isStatic: true, angle: Math.atan2(dy, dx), label: 'ground', friction: 1, restitution: 0,
-        });
+        }));
+      }
+    }
+  }
+
+  // BIKE RUSH: build more course before the bike gets to the end, and clear away ground far behind it
+  growEndlessCourse() {
+    const x = this.bike.frame.position.x;
+    const pieces = this.track.pieces;
+    const lastLip = pieces[pieces.length - 1][pieces[pieces.length - 1].length - 1].x;
+    if (x > lastLip - 5000) {
+      this.track.extend(3);
+      this.buildGround();
+      this.addPickups();
+    }
+    for (const gp of this.groundPieces) {
+      if (!gp.gone && gp.endX < x - 5000) {
+        gp.gone = true;
+        gp.g.destroy();
+        this.matter.world.remove(gp.bodies);
       }
     }
   }
@@ -204,7 +245,7 @@ export class Level1Scene extends Phaser.Scene {
     });
     const finishY = groundYAt(this.track, this.track.finishX - 400);
     this.finishLine = this.add.graphics().setDepth(2);
-    for (let r = 0; r < 12; r++) {
+    for (let r = 0; r < (this.endless ? 0 : 12); r++) { // (Bike Rush has no finish line)
       for (let c = 0; c < 2; c++) {
         this.finishLine.fillStyle((r + c) % 2 ? 0x111111 : 0xffffff);
         this.finishLine.fillRect(this.track.finishX - 400 + c * 14, finishY - 168 + r * 14, 14, 14);
@@ -236,21 +277,34 @@ export class Level1Scene extends Phaser.Scene {
 
   // bread crumbs to collect, and boost pads on the ground
   makePickups() {
-    this.crumbItems = this.track.crumbs.map((c) => {
+    this.crumbItems = [];
+    this.boostPads = [];
+    this.addPickups();
+  }
+
+  // make pictures for any crumbs and boost pads that don't have one yet (Bike Rush adds more as it grows)
+  addPickups() {
+    const crumbs = this.track.crumbs, boosts = this.track.boosts;
+    // (in Bike Rush, crumbs and pads on ground that isn't built yet wait for the next time)
+    const builtTo = this.endless ? this.groundPieces[this.groundPieces.length - 1].endX : Infinity;
+    while (this.crumbItems.length < crumbs.length && crumbs[this.crumbItems.length].x <= builtTo) {
+      const c = crumbs[this.crumbItems.length];
       let y = c.y;
       if (y === undefined) y = (groundYAt(this.track, c.x) ?? 560) - c.lift;
       const img = this.add.image(c.x, y, 'crumb').setDepth(9);
       this.tweens.add({ targets: img, y: y - 8, duration: 700 + Math.random() * 300, yoyo: true, repeat: -1, ease: 'Sine.inOut' });
       this.tweens.add({ targets: img, angle: { from: -10, to: 10 }, duration: 900, yoyo: true, repeat: -1 });
-      return img;
-    });
-    this.boostPads = this.track.boosts.map((b) => {
+      this.crumbItems.push(img);
+    }
+    while (this.boostPads.length < boosts.length && boosts[this.boostPads.length].x <= builtTo) {
+      const b = boosts[this.boostPads.length];
       const y = groundYAt(this.track, b.x) ?? 560;
       const ahead = groundYAt(this.track, b.x + 40) ?? y;
       const img = this.add.image(b.x, y - 4, 'boostPad').setDepth(3).setRotation(Math.atan2(ahead - y, 40));
       this.tweens.add({ targets: img, alpha: 0.6, duration: 300, yoyo: true, repeat: -1 });
-      return { x: b.x, y, img, ready: 0 };
-    });
+      this.boostPads.push({ x: b.x, y, img, ready: 0 });
+    }
+    if (this.crumbs) { this.crumbs.total = this.crumbItems.length; this.crumbs.draw(); }
   }
 
   // how far down the bike can fall at this x before it counts as falling into the gap
@@ -378,7 +432,7 @@ export class Level1Scene extends Phaser.Scene {
     }).setOrigin(0.5).setDepth(30);
     this.tweens.add({ targets: bonk, y: p.y - 110, alpha: 0, duration: 900, onComplete: () => bonk.destroy() });
     eraseSprites(this, [this.bikeImg, this.backWheelImg, this.frontWheelImg], { duration: 650 });
-    this.time.delayedCall(1000, () => this.respawn());
+    this.time.delayedCall(1000, () => (this.endless ? this.gameOver('BONK! You crashed.') : this.respawn()));
   }
 
   respawn() {
@@ -391,10 +445,16 @@ export class Level1Scene extends Phaser.Scene {
     const style = { fontFamily: FONT, fontSize: '22px', color: '#fff4dc', stroke: '#3b1d4a', strokeThickness: 5 };
     this.cpText = this.add.text(20, 16, '', style).setScrollFactor(0).setDepth(50);
     this.timeText = this.add.text(20, 46, '', style).setScrollFactor(0).setDepth(50);
-    this.add.text(W - 20, 16, 'R = back to checkpoint   P / Esc = pause', { ...style, fontSize: '18px' })
+    this.add.text(W - 20, 16, `${this.endless ? 'R = restart' : 'R = back to checkpoint'}   P / Esc = pause`, { ...style, fontSize: '18px' })
       .setOrigin(1, 0).setScrollFactor(0).setDepth(50);
     // progress bar: Crumb vs the finish
     this.progress = this.add.graphics().setScrollFactor(0).setDepth(50);
+    this.toast = this.add.text(W / 2, 140, '', { ...style, fontSize: '40px', fontStyle: 'bold' })
+      .setOrigin(0.5).setScrollFactor(0).setDepth(50).setAlpha(0);
+    if (this.endless) { // Bike Rush: no checkpoints or finish, just how far you've got
+      try { this.bestDist = +(localStorage.getItem('duckdash-bikerush-best') || 0); } catch (e) { this.bestDist = 0; }
+      return;
+    }
     // click a checkpoint dot on the bar to jump to it: any checkpoint you've EVER reached in this level
     // (remembered between runs). Jumping ahead of where you've got to in THIS run makes it a practice run.
     this.levelId = this.mode === 'demo' ? 'demo1' : `story${this.stage}`;
@@ -411,8 +471,46 @@ export class Level1Scene extends Phaser.Scene {
         this.cpIndex = i; this.respawn();
         this.showToast(`${forward ? 'Skip to' : 'Back to'} checkpoint ${i}`);
       });
-    this.toast = this.add.text(W / 2, 140, '', { ...style, fontSize: '40px', fontStyle: 'bold' })
-      .setOrigin(0.5).setScrollFactor(0).setDepth(50).setAlpha(0);
+  }
+
+  // BIKE RUSH: how far you've ridden, in meters (about 50 pixels = 1 meter)
+  distance() {
+    return Math.max(0, Math.floor((this.bike.frame.position.x - this.track.checkpoints[0].x) / 50));
+  }
+
+  // BIKE RUSH: you crashed or fell, so the run is over. Show how far you got.
+  gameOver(message) {
+    if (this.finished) return;
+    this.finished = true;
+    audio.engineStop();
+    const { width: W, height: H } = this.scale;
+    const meters = this.distance();
+    let best = this.bestDist || 0;
+    const newBest = meters > best;
+    if (newBest) { best = meters; try { localStorage.setItem('duckdash-bikerush-best', String(best)); } catch (e) { /* ignore */ } }
+    this.toast.setAlpha(0);
+    audio.sfx[newBest ? 'finish' : 'fall']();
+    const fixed = (o) => o.setScrollFactor(0).setDepth(61);
+    const panel = this.add.graphics().setScrollFactor(0).setDepth(60);
+    panel.fillStyle(0x1a1035, 0.92); panel.fillRoundedRect(W / 2 - 360, H / 2 - 220, 720, 440, 28);
+    panel.lineStyle(4, 0xfff4dc, 0.9); panel.strokeRoundedRect(W / 2 - 360, H / 2 - 220, 720, 440, 28);
+    const style = { fontFamily: FONT, color: '#fff4dc', align: 'center' };
+    fixed(this.add.text(W / 2, H / 2 - 165, 'GAME OVER', { ...style, fontSize: '56px', fontStyle: 'bold' }).setOrigin(0.5));
+    fixed(this.add.text(W / 2, H / 2 - 105, message, { ...style, fontSize: '22px', color: '#ffb3b3' }).setOrigin(0.5));
+    const dist = fixed(this.add.text(W / 2, H / 2 - 45, `${meters} m`, {
+      ...style, fontSize: '64px', fontStyle: 'bold', color: '#ffe066', stroke: '#3b1d4a', strokeThickness: 8,
+    }).setOrigin(0.5).setScale(0.4));
+    this.tweens.add({ targets: dist, scale: 1, duration: 450, ease: 'Back.out' });
+    fixed(this.add.text(W / 2, H / 2 + 25,
+      `${newBest ? 'NEW BEST!' : `Best: ${best} m`}   ·   Time: ${fmtTime(this.elapsed / 1000)}   ·   Bread crumbs: ${this.crumbs.got}`,
+      { ...style, fontSize: '20px' }).setOrigin(0.5));
+    const opts = { w: 280, h: 56, size: 26 };
+    const buttons = [
+      makeButton(this, W / 2, H / 2 + 100, 'Ride again', () => this.scene.restart({ mode: 'endless' }), opts),
+      makeButton(this, W / 2, H / 2 + 170, 'Menu', () => this.scene.start('Menu'), opts),
+    ];
+    buttons.forEach((b) => { b.bg.setScrollFactor(0).setDepth(61); b.text.setScrollFactor(0).setDepth(62); b.zone.setScrollFactor(0); });
+    this.time.delayedCall(700, () => keyboardMenu(this, buttons)); // a moment before keys work
   }
 
   // the timer flashes green and pops when a flip takes time off it
@@ -432,9 +530,13 @@ export class Level1Scene extends Phaser.Scene {
   updateHud() {
     const { width: W } = this.scale;
     const total = this.track.checkpoints.length - 1;
-    this.cpText.setText(`Checkpoint ${this.cpIndex} / ${total}`);
     const secs = this.elapsed / 1000;
     this.timeText.setText(`Time ${Math.floor(secs / 60)}:${(secs % 60).toFixed(1).padStart(4, '0')}`);
+    if (this.endless) { // Bike Rush: distance instead of checkpoints and a progress bar
+      this.cpText.setText(`Distance ${this.distance()} m   (best ${this.bestDist} m)`);
+      return;
+    }
+    this.cpText.setText(`Checkpoint ${this.cpIndex} / ${total}`);
 
     const start = this.track.checkpoints[0].x, end = this.track.finishX - 400;
     const t = Phaser.Math.Clamp((this.bike.frame.position.x - start) / (end - start), 0, 1);
@@ -460,6 +562,7 @@ export class Level1Scene extends Phaser.Scene {
     if (!this.bike) return;
     this.syncSprites();
     this.updateHud();
+    if (this.endless && !this.finished) this.growEndlessCourse();
     if (this.finished) {
       // roll to a gentle stop after the finish line
       const { Body } = Phaser.Physics.Matter.Matter;
@@ -592,7 +695,7 @@ export class Level1Scene extends Phaser.Scene {
       this.crashed = true;
       this.showToast('Splat! Try again');
       audio.sfx.fall();
-      this.time.delayedCall(800, () => this.respawn());
+      this.time.delayedCall(800, () => (this.endless ? this.gameOver('You fell into a gap!') : this.respawn()));
     }
 
     // stuck? (hasn't moved forward in 4 seconds) -> remind them about R

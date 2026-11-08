@@ -19,6 +19,8 @@ export function makeTrackBuilder(startX, startY) {
   const b = {
     get x() { return x; },
     get y() { return y; },
+    // the lists so far (Bike Rush keeps adding to them while you ride)
+    parts() { return { pieces, checkpoints, signs, crumbs, boosts }; },
 
     flat(len) { push(x + len, y); return b; },
 
@@ -271,6 +273,52 @@ function edgeOfSpace() {
 
   const track = t.finish();
   track.sky = [2.8, 4];
+  return track;
+}
+
+// ---------------------------------------------------------------- BIKE RUSH (endless)
+// A bike course that never ends, made only from the same pieces as the story courses: hills, boost pads,
+// bread crumbs and the kicker jumps with their landing slopes. It's built a few "chunks" at a time; every
+// chunk ends with a jump over a gap, so each chunk is its own piece of ground. Different every run.
+export function makeEndlessBikeTrack() {
+  let seed = (Date.now() & 0xffff) || 1;
+  const rand = () => { seed = (seed * 16807) % 2147483647; return seed / 2147483647; };
+  const t = makeTrackBuilder(-600, 560);
+  t.flat(600).checkpoint()
+    .sign('BIKE RUSH! One life. How far can you ride?', 160)
+    .crumbs(500, 4)
+    .flat(700);
+
+  // the jumps from the story courses: [ramp length, ramp rise, crumb arc width, crumb arc height, crumbs,
+  //  gap width, gap drop, landing length, landing drop, boost pad before it?]
+  const JUMPS = [
+    [260, -110, 300, 110, 4, 260, 160, 1400, 320, true],
+    [260, -110, 320, 120, 3, 300, 60, 1250, 285, true],
+    [320, -190, 420, 200, 5, 380, 320, 1300, 360, true],
+    [400, -170, 500, 220, 6, 440, 360, 1500, 440, true],
+    [740, -380, 460, 180, 5, 420, 480, 1400, 400, false],
+  ];
+  const parts = t.parts();
+  const track = { ...parts, finishX: Infinity, endless: true, built: 0 };
+
+  // add n more chunks to the end of the course
+  track.extend = (n = 4) => {
+    for (let k = 0; k < n; k++) {
+      // something to ride over first
+      const pick = rand();
+      if (pick < 0.35) t.crumbs(600, 4, 70).hills(1, 110 + Math.round(rand() * 160), 600);
+      else if (pick < 0.65) t.crumbs(1100, 4, 70).hills(2, 120 + Math.round(rand() * 60), 560);
+      else if (pick < 0.85) t.crumbs(500, 3).flat(300).landing(700, 200); // a downhill dash
+      else t.hills(3, 120, 500);
+      t.flat(200);
+      // then a jump (with a boost pad run-up for most of them)
+      const [rl, rr, cw, ch, cn, gw, gd, ll, ld, boost] = JUMPS[Math.floor(rand() * JUMPS.length)];
+      if (boost) t.boost(60).flat(160); else t.flat(100);
+      t.ramp(rl, rr).airCrumbs(cw, ch, cn).gap(gw, gd).landing(ll, ld).flat(250);
+    }
+    track._segs = null; // the ground changed: groundYAt has to re-sort its list
+  };
+  track.extend(4);
   return track;
 }
 
