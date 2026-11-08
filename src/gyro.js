@@ -170,8 +170,10 @@ export const gyro = {
   //   flick = 1 -> a double flick: jump
   //   flick = 3 -> a triple flick: double jump (a second jump while you're in the air)
   noteFlick(kind) {
-    if (currentLevel() !== 'Level2') return;
     const now = performance.now();
+    // in a cutscene, a double flick moves on to the next line of dialogue
+    if (kind === 1 && sceneRunning('Cutscene')) { this.nextEdge = true; this.nextUntil = now + 600; return; }
+    if (currentLevel() !== 'Level2') return;
     if (kind === 1) {
       this.jumpEdge = true;
       this.jumpUntil = now + JUMP_HOLD;
@@ -188,6 +190,13 @@ export const gyro = {
     }
     this.jumpEdge = false;
     return true;
+  },
+
+  // cutscenes: was there a double flick just now? (true once per flick)
+  takeNext() {
+    const yes = !!this.nextEdge && performance.now() <= this.nextUntil;
+    this.nextEdge = false;
+    return yes;
   },
 
   takeDoubleJump() {
@@ -243,6 +252,11 @@ export function syncGyro() {
   externalInput.left = left;
   externalInput.right = right;
   externalInput.active = true;
+}
+
+function sceneRunning(key) {
+  const running = window.game?.scene?.getScenes(true) || [];
+  return running.some((scene) => scene.scene.key === key);
 }
 
 function currentLevel() {

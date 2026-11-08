@@ -77,6 +77,26 @@ export function levelTitle(scene, number, name) {
   audio.sfx.whoosh();
 }
 
+// Makes the checkpoint dots on the progress bar at the top clickable: click a checkpoint you've already
+// reached to go back to it. xs = the x of each dot on screen, y = the bar's y.
+// canGo(i) says if dot i can be clicked right now, go(i) sends Crumb there.
+// Returns { hovered } so the HUD can draw a ring around the dot under the mouse.
+export function checkpointBarClicks(scene, xs, y, canGo, go) {
+  const state = { hovered: -1 };
+  xs.forEach((x, i) => {
+    const zone = scene.add.zone(x, y, 30, 30).setScrollFactor(0).setDepth(52).setInteractive({ useHandCursor: true });
+    zone.on('pointerover', () => { state.hovered = i; });
+    zone.on('pointerout', () => { if (state.hovered === i) state.hovered = -1; });
+    zone.on('pointerdown', (pointer, lx, ly, event) => {
+      if (event) event.stopPropagation();
+      if (!canGo(i)) return;
+      audio.sfx.click();
+      go(i);
+    });
+  });
+  return state;
+}
+
 // ------------------------------------------------------------------ "erase" effect when Crumb dies
 // The picture wipes away from the top down, and little yellow bits fly off the wiping edge.
 // sprites: the images to erase (the first one sets where the bits come from).

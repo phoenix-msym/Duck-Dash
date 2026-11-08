@@ -44,6 +44,14 @@ function makeTunnelBuilder(seed) {
     // fill with plain tiles until this part (which started at row "start") is "length" rows long
     padPart(start, length) { b.full(Math.max(0, start + length - rows.length)); },
 
+    // fill the rest of a part with more of its obstacle: a few calm rows, then obstacle(), again and again,
+    // so there are no long empty stretches. Ends with a few calm rows before the next checkpoint.
+    fillPart(start, length, obstacle, calm = 7) {
+      let k = 0;
+      while (rows.length < start + length - calm - 6) { b.full(calm); obstacle(k++); }
+      b.padPart(start, length);
+    },
+
     // A field of candy obstacles: every "every" rows, a few candy canes and gumdrops stand on the tiles.
     // There's always plenty of room to steer between them.
     candyField(count, every = 4, perRow = 4) {
@@ -74,7 +82,7 @@ function makeTunnelBuilder(seed) {
     },
     full(n) { b.make(n, () => true); },
     // a safe stretch with a few lily pads scattered around (never right before a jump)
-    rest(n) { b.make(n, (l, i) => (i > 1 && i < n - 4 && rand() < 0.03 ? PAD : TILE)); },
+    rest(n) { b.make(n, (l, i) => (i > 1 && i < n - 4 && rand() < 0.012 ? PAD : TILE)); }, // only the odd lily pad
     hint(text) { hints.push({ row: rows.length, text }); },
     checkpoint() { checkpoints.push(rows.length); b.full(10); },
 
@@ -82,10 +90,12 @@ function makeTunnelBuilder(seed) {
     crumbTrail(ahead, n, lane, h) {
       for (let i = 0; i < n; i++) crumbs.push({ z: rows.length + ahead + i * 2 + 0.5, lane, h });
     },
-    windZone(dir, build) {
+    // dropWall = true: just before you get there, the game removes the side of the tunnel next to you in the
+    // direction the wind blows, so if you don't lean against the wind it pushes you off the edge
+    windZone(dir, build, dropWall = false) {
       const start = rows.length;
       build();
-      winds.push({ start, end: rows.length, dir });
+      winds.push({ start, end: rows.length, dir, dropWall });
     },
     jumpGap(difficulty) {
       const len = 2 + Math.floor(rand() * Math.min(3, 1 + difficulty));
@@ -183,7 +193,7 @@ function intoTheTube() {
   t.checkpoint();
   t.hint('Lily pads = SPEED BOOST!  Cracked tiles collapse ahead: switch sides!');
   t.full(6);
-  t.make(10, (l) => (side(l) === 0 ? (l % LPS === 1 || l % LPS === 2 ? PAD : TILE) : TILE));
+  t.make(10, (l, i) => (side(l) === 0 && l % LPS === 1 + (i % 2) && i % 3 === 0 ? PAD : TILE)); // a few pads, spread out
   t.full(8);
   t.crumbTrail(0, 4, 2, 0.5);
   t.crackedPatch(12);
@@ -234,9 +244,9 @@ function wallRunWinds() {
 
   // ---------------- Part 3: WIND ----------------
   t.checkpoint();
-  t.hint('WIND ahead! Lean against it!');
+  t.hint("WIND! Don't get blown off the edge!");
   t.rest(14);
-  t.windZone(+1, () => { t.crumbTrail(4, 5, 0, 0.5); t.holes(22, 0.04); }); // very few holes while the wind pushes you
+  t.windZone(+1, () => { t.crumbTrail(4, 5, 0, 0.5); t.full(22); }, true); // no holes: the wall beside you drops away instead
   t.rest(14);
   t.windZone(-1, () => t.narrowPath(0, 3)); // a wide path (7 lanes) instead of a thin one
   t.rest(14);
@@ -247,7 +257,7 @@ function wallRunWinds() {
   t.checkpoint();
   t.hint('A space storm! The wind keeps changing direction!');
   t.rest(12);
-  t.windZone(-1, () => { t.crumbTrail(3, 4, 14, 0.5); t.holes(20, 0.04); });
+  t.windZone(-1, () => { t.crumbTrail(3, 4, 14, 0.5); t.full(20); }, true);
   t.rest(12);
   t.windZone(+1, () => { t.full(4); t.crackedPatch(10); t.full(4); });
   t.rest(12);
@@ -270,7 +280,7 @@ function ufoShowdown() {
   t.crumbTrail(2, 5, 1, 0.5);
   t.holes(16, 0.05);
   t.rest(12);
-  t.windZone(+1, () => t.holes(16, 0.03));
+  t.windZone(+1, () => t.full(16), true);
   t.rest(12);
   t.jumpGap(1);
   t.rest(12);
@@ -328,21 +338,21 @@ export function buildLevel2Demo() {
   t.make(3, () => false);  // ...and one more gap
   t.rest(10);
   t.make(12, (l) => side(l) !== 2); // the ceiling disappears this time
-  t.padPart(part, 90);
+  t.fillPart(part, 90, (k) => (k % 2 ? t.make(3, () => false) : t.make(12, (l) => side(l) !== (k + 1) % 4))); // more gaps and missing walls
 
   part = t.rows.length;
   t.checkpoint(); // LILY POND: lily pads everywhere (9.8 rows/s, but the boosts make you faster)
   t.hint('LILY PADS! Run over them for a speed boost!');
   t.crumbTrail(0, 4, 2, 0.5);
-  t.make(10, (l) => (side(l) === 0 && (l % LPS === 1 || l % LPS === 2) ? PAD : TILE)); // a runway on the floor
+  t.make(12, (l, i) => (side(l) === 0 && l % LPS === 1 + (i % 2) && i % 4 === 0 ? PAD : TILE)); // a trail of pads on the floor
   t.full(6);
-  t.make(10, (l) => (l % LPS === 1 || l % LPS === 2 ? PAD : TILE));                     // ...on every wall
+  t.make(12, (l, i) => (l % LPS === 1 && i % 6 === 0 ? PAD : TILE));                        // ...one on every wall
   t.full(6);
   t.crumbTrail(0, 5, 6, 0.5);
-  t.make(14, (l, i) => ((l + i) % 3 === 0 ? PAD : TILE));                                 // a whole pond of them
+  t.make(14, (l, i) => (i % 3 === 0 && (l * 5 + i) % 7 === 0 ? PAD : TILE));             // scattered around
   t.full(6);
-  t.make(10, (l) => (side(l) === 2 && (l % LPS === 1 || l % LPS === 2) ? PAD : TILE)); // a runway on the ceiling
-  t.padPart(part, 110);
+  t.make(12, (l, i) => (side(l) === 2 && l % LPS === 1 + (i % 2) && i % 4 === 0 ? PAD : TILE)); // a trail on the ceiling
+  t.fillPart(part, 110, (k) => t.make(8, (l, i) => (i % 4 === 0 && (l * 5 + i * 3 + k) % 9 === 0 ? PAD : TILE))); // a few more pads, spread out
 
   part = t.rows.length;
   t.checkpoint(); // CANDY: candy canes and gumdrops to dodge, and floating platforms (9.8 rows/s)
@@ -354,7 +364,7 @@ export function buildLevel2Demo() {
   t.stepping(0);
   t.full(8);
   t.candyField(22, 4, 4); // a bit closer together and more of them
-  t.padPart(part, 98);
+  t.fillPart(part, 98, () => t.candyField(14, 4, 4)); // more candy
 
   part = t.rows.length;
   t.checkpoint(); // DESERT: wall run (10.4 rows/s)
@@ -368,7 +378,7 @@ export function buildLevel2Demo() {
   t.make(14, (l) => side(l) === 3); // only one wall left!
   t.full(8);
   t.make(14, (l) => side(l) === 0 || side(l) === 2);
-  t.padPart(part, 104);
+  t.fillPart(part, 104, (k) => t.make(12, (l) => side(l) === k % 4 || side(l) === (k + 1) % 4)); // only two walls left
 
   part = t.rows.length;
   t.checkpoint(); // SYNTHWAVE: broken tiles (9.8 rows/s)
@@ -378,18 +388,18 @@ export function buildLevel2Demo() {
     t.crackedPatch(9); // two sides cracked, two sides solid (a different pair each time)
     t.full(4);
   }
-  t.padPart(part, 98);
+  t.fillPart(part, 98, () => t.crackedPatch(9), 4); // more broken tiles
 
   part = t.rows.length;
   t.checkpoint(); // FROST: wind (10.8 rows/s)
-  t.hint('WIND! Lean against it!');
+  t.hint("WIND! Don't get blown off the edge!");
   t.full(5);
-  t.windZone(+1, () => { t.crumbTrail(1, 4, 0, 0.5); t.holes(18, 0.03); });
+  t.windZone(+1, () => { t.crumbTrail(1, 4, 0, 0.5); t.full(18); }, true);
   t.rest(8);
-  t.windZone(-1, () => t.full(16));
+  t.windZone(-1, () => t.full(16), true);
   t.rest(8);
   t.windZone(+1, () => t.make(18, (l) => side(l) !== 0));
-  t.padPart(part, 108);
+  t.fillPart(part, 108, (k) => t.windZone(k % 2 ? 1 : -1, () => t.full(14), true)); // more gusts
 
   part = t.rows.length;
   t.checkpoint(); // RED ALERT: the boss fight, the longest part (10.2 rows/s x 16 seconds)
@@ -403,7 +413,7 @@ export function buildLevel2Demo() {
   t.holes(12, 0.03);
   t.full(30);
   t.holes(12, 0.03);
-  t.padPart(part, 157);
+  t.fillPart(part, 157, () => t.holes(10, 0.03), 9); // the UFO keeps shooting, a few holes too
   const bossEnd = t.rows.length;
   t.full(6 + 34); // a short calm run to the finish line, then the bit you jog along after finishing
 
@@ -469,7 +479,7 @@ export function makeEndlessTrack() {
         else if (pick < 0.64) t.crackedPatch(10);
         else if (pick < 0.76) t.narrowPath(0, d >= 2 ? 2 : 3);
         else if (pick < 0.86) { t.full(6); t.stepping(0); }
-        else t.windZone(t.rand() < 0.5 ? 1 : -1, () => t.holes(18, 0.04));
+        else t.windZone(t.rand() < 0.5 ? 1 : -1, () => t.full(18), true);
         t.rest(Math.max(8, 16 - d * 2)); // a breather that gets shorter the further you go
       }
       fixCrumbs(t.rows, t.crumbs, firstNewCrumb); // no crumbs floating over holes

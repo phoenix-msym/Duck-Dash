@@ -257,9 +257,18 @@ export function level1Scenery(scene, track) {
     }
     prev = { x, y };
   }
+  // Where to stand something "width" pixels wide at x so it never floats: the LOWER of the ground under its
+  // left and right edges (on a slope it sinks into the hill a little on the high side instead of hovering).
+  // Returns null over a gap.
+  const standY = (x, width) => {
+    const a = groundYAt(track, x - width / 2), b = groundYAt(track, x + width / 2), m = groundYAt(track, x);
+    if (a === null || b === null || m === null) return null;
+    return Math.max(a, b, m);
+  };
+
   // a few mailboxes
   [700, 2600, 5200, 9800].forEach((x) => {
-    const y = groundYAt(track, x);
+    const y = standY(x, 30);
     if (y !== null) scene.add.image(x, y + 4, 'mailbox').setOrigin(0.5, 1).setDepth(1.2);
   });
   // green road signs counting down to space
@@ -268,15 +277,29 @@ export function level1Scenery(scene, track) {
     [track.checkpoints[2]?.x + 260, 'SPACE  →  2 km'],
     [track.checkpoints[3]?.x + 120, 'SPACE  →  1 km'],
   ];
-  roadSigns.forEach(([x, text]) => {
-    if (!x) return;
-    const y = groundYAt(track, x);
-    if (y === null) return;
+  roadSigns.forEach(([want, text]) => {
+    if (!want) return;
+    // look for the flattest spot near where we want it (signs look odd on a steep hill)
+    let x = null, best = Infinity;
+    for (const dx of [0, -80, 80, -160, 160, -240, 240, -320, 320, -400, 400]) {
+      const l = groundYAt(track, want + dx - 57), r = groundYAt(track, want + dx + 57);
+      if (l === null || r === null) continue;
+      // (and keep well away from the checkpoint flags, so they don't overlap)
+      const nearFlag = track.checkpoints.some((cp) => Math.abs(want + dx - cp.x) < 160);
+      const steep = Math.abs(l - r) + Math.abs(dx) * 0.05 + (nearFlag ? 1000 : 0);
+      if (steep < best) { best = steep; x = want + dx; }
+    }
+    if (x === null) return;
+    // each leg goes all the way down to the ground under it, and the board sits above the higher leg
+    const legL = groundYAt(track, x - 57), legR = groundYAt(track, x + 57);
+    const top = Math.min(legL, legR) - 150;
     const g = scene.add.graphics().setDepth(1.3);
-    g.fillStyle(0x6d7486); g.fillRect(x - 60, y - 150, 6, 150); g.fillRect(x + 54, y - 150, 6, 150);
-    g.fillStyle(0x1f7a3a); g.fillRoundedRect(x - 90, y - 200, 180, 62, 8);
-    g.lineStyle(3, 0xffffff); g.strokeRoundedRect(x - 85, y - 195, 170, 52, 6);
-    scene.add.text(x, y - 169, text, { fontFamily: FONT, fontSize: '22px', fontStyle: 'bold', color: '#ffffff' })
+    g.fillStyle(0x6d7486);
+    g.fillRect(x - 60, top, 6, legL - top + 6);
+    g.fillRect(x + 54, top, 6, legR - top + 6);
+    g.fillStyle(0x1f7a3a); g.fillRoundedRect(x - 90, top - 50, 180, 62, 8);
+    g.lineStyle(3, 0xffffff); g.strokeRoundedRect(x - 85, top - 45, 170, 52, 6);
+    scene.add.text(x, top - 19, text, { fontFamily: FONT, fontSize: '22px', fontStyle: 'bold', color: '#ffffff' })
       .setOrigin(0.5).setDepth(1.4);
   });
   // hay bales at the bottom of each landing (every ground piece after a gap)
@@ -284,7 +307,7 @@ export function level1Scenery(scene, track) {
     let low = piece[0];
     for (const pt of piece) { if (pt.x > piece[0].x + 900) break; if (pt.y > low.y) low = pt; }
     [-40, 30].forEach((dx, i) => {
-      const x = low.x + 120 + dx, y = groundYAt(track, x);
+      const x = low.x + 120 + dx, y = standY(x, i ? 50 : 60);
       if (y !== null) scene.add.image(x, y + 6, 'hayBale').setOrigin(0.5, 1).setDepth(1.1).setScale(i ? 0.85 : 1);
     });
   });

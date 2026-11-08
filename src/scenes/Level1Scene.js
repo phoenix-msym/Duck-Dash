@@ -3,7 +3,7 @@ import { createControls } from '../controls.js';
 import { settings } from '../settings.js';
 import { gyro } from '../gyro.js';
 import { buildLevel1, buildLevel1Demo, groundYAt } from '../level1Track.js';
-import { FONT, eraseSprites, unerase, levelCompletePanel, crumbHud, levelTitle } from '../ui.js';
+import { FONT, eraseSprites, unerase, levelCompletePanel, crumbHud, levelTitle, checkpointBarClicks } from '../ui.js';
 import { STORY, storyIndex, startStoryLevel } from '../story.js';
 import { audio } from '../audio.js';
 import { addPauseButton } from './PauseScene.js';
@@ -13,7 +13,8 @@ import { level1Scenery } from '../scenery.js';
 const MAX_WHEEL_SPIN = 1.1;   // top speed (was 1.3)
 const WHEEL_ACCEL = 0.05;     // how fast it speeds up (was 0.06)
 const HILL_PUSH = 0.0005;     // extra push along the ground while riding (stops it bogging down on hills)
-const DOWNFORCE = 0.0011;     // presses the bike onto the ground while riding, so it doesn't hop over bumps
+const CLIMB_BOOST = 0.0006; // extra push up hills (0.001 would cancel ALL of gravity on a slope)
+const DOWNFORCE = 0.0011;    // presses the bike onto the ground while riding, so it doesn't hop over bumps
 const ANTI_HOP = 0.7;     // how much of a bounce off the ground gets soaked up each frame (0 = none, 1 = all)
 const FALL_DEPTH = 220;       // how far below a gap's edge you fall before "Splat!" (bigger = falls deeper)
 const AIR_DRAG = 0.0015;      // low air drag = Crumb keeps his momentum (the default is 0.01)
@@ -198,7 +199,7 @@ export class Level1Scene extends Phaser.Scene {
 
   makeFlagsAndSigns() {
     this.flags = this.track.checkpoints.map((cp, i) => {
-      const f = this.add.image(cp.x, cp.y, i === 0 ? 'flagOn' : 'flag').setOrigin(0.07, 1).setDepth(2);
+      const f = this.add.image(cp.x, cp.y + 4, i === 0 ? 'flagOn' : 'flag').setOrigin(0.07, 1).setDepth(2);
       return f;
     });
     const finishY = groundYAt(this.track, this.track.finishX - 400);
@@ -221,7 +222,7 @@ export class Level1Scene extends Phaser.Scene {
       const y = groundYAt(this.track, sx);
       if (y === null) continue;
       const g = this.add.graphics().setDepth(1);
-      g.fillStyle(0x6b4226); g.fillRect(sx - 5, y - 110, 10, 110);
+      g.fillStyle(0x6b4226); g.fillRect(sx - 5, y - 110, 10, 118); // (reaches a little into the ground)
       const text = this.add.text(sx, y - 140, sign.text, {
         fontFamily: FONT, fontSize: '22px', color: '#3b1d4a', fontStyle: 'bold', align: 'center',
         wordWrap: { width: 260 },
@@ -394,6 +395,13 @@ export class Level1Scene extends Phaser.Scene {
       .setOrigin(1, 0).setScrollFactor(0).setDepth(50);
     // progress bar: Crumb vs the finish
     this.progress = this.add.graphics().setScrollFactor(0).setDepth(50);
+    // click a checkpoint dot on the bar to go back to it (any checkpoint you've reached so far)
+    this.reachedCp = 0;
+    const start = this.track.checkpoints[0].x, end = this.track.finishX - 400;
+    this.barDots = this.track.checkpoints.map((cp) => W / 2 - 200 + 400 * (cp.x - start) / (end - start));
+    this.barClicks = checkpointBarClicks(this, this.barDots, 30,
+      (i) => !this.finished && i <= this.reachedCp,
+      (i) => { this.cpIndex = i; this.respawn(); this.showToast(`Back to checkpoint ${i}`); });
     this.toast = this.add.text(W / 2, 140, '', { ...style, fontSize: '40px', fontStyle: 'bold' })
       .setOrigin(0.5).setScrollFactor(0).setDepth(50).setAlpha(0);
   }
@@ -426,9 +434,13 @@ export class Level1Scene extends Phaser.Scene {
     this.progress.fillStyle(0x3b1d4a, 0.6); this.progress.fillRoundedRect(bx, by - 6, bw, 12, 6);
     this.progress.fillStyle(0xffd23f); this.progress.fillRoundedRect(bx, by - 6, Math.max(12, bw * t), 12, 6);
     this.track.checkpoints.forEach((cp, i) => {
-      const ct = (cp.x - start) / (end - start);
-      this.progress.fillStyle(i <= this.cpIndex ? 0x3ddc84 : 0xfff4dc);
-      this.progress.fillCircle(bx + bw * ct, by, 5);
+      const x = this.barDots[i];
+      const canClick = i <= this.reachedCp && !this.finished;
+      if (canClick && this.barClicks.hovered === i) { // a white ring around the one under the mouse
+        this.progress.lineStyle(3, 0xffffff, 1); this.progress.strokeCircle(x, by, 10);
+      }
+      this.progress.fillStyle(canClick ? 0x3ddc84 : 0xfff4dc);
+      this.progress.fillCircle(x, by, canClick && this.barClicks.hovered === i ? 7 : 5);
     });
     this.progress.fillStyle(0xb6ff3b); this.progress.fillCircle(bx + bw, by, 8); // the UFO
   }
@@ -475,6 +487,19 @@ export class Level1Scene extends Phaser.Scene {
         const f = HILL_PUSH * chassis.mass * c.forward;
         Body.applyForce(chassis, chassis.position, { x: Math.cos(chassis.angle) * f, y: Math.sin(chassis.angle) * f });
       }
+      // CLIMBING BOOST: going UP a hill with the gas on, push the bike along the hill. The steeper the hill,
+      // the harder the push (it cancels out most of the gravity pulling you back), so hills never feel
+      // like a wall you crawl up, even from a standing start.
+      if (c.forward > 0 && this.wheelsTouching.size > 0) {
+        const px = frame.position.x;
+        const yA = groundYAt(this.track, px - 30), yB = groundYAt(this.track, px + 30);
+        if (yA !== null && yB !== null && yB < yA) { // the ground ahead is higher: uphill
+          const len = Math.hypot(60, yB - yA);
+          const steep = (yA - yB) / len; // 0 = flat ... 1 = straight up
+          const f = CLIMB_BOOST * (chassis.mass + back.mass + front.mass) * steep * c.forward;
+          Body.applyForce(chassis, chassis.position, { x: (60 / len) * f, y: ((yB - yA) / len) * f });
+        }
+      }
     }
     // "downforce": while riding on the ground, press the bike gently onto it so bumps and hill bottoms
     // don't bounce it into the air
@@ -489,7 +514,12 @@ export class Level1Scene extends Phaser.Scene {
     // Ramp jumps still work: near a gap there's no ground ahead to measure, so it's switched off there,
     // and once you're more than a few pixels in the air you fly freely.
     // (each wheel checks the ground right under itself, so a wheel starting up a hill isn't held back)
-    if (!this.crashed) {
+    // (switched off while the ground under the bike rises ahead of it: starting up a hill, the wheels get
+    //  thrown upward a little and holding them down made the bottom of every hill feel like a wall)
+    const fy = frame.position.x;
+    const gBehind = groundYAt(this.track, fy - 60), gAhead = groundYAt(this.track, fy + 90);
+    const climbing = gBehind !== null && gAhead !== null && gBehind - gAhead > 10;
+    if (!this.crashed && !climbing) {
       for (const body of [back, front]) {
         const px = body.position.x;
         const yA = groundYAt(this.track, px - 25), yB = groundYAt(this.track, px + 25), yM = groundYAt(this.track, px);
@@ -497,11 +527,25 @@ export class Level1Scene extends Phaser.Scene {
         const touching = this.wheelsTouching.has(body);
         const gapBelow = yM - (body.position.y + 16); // pixels between the bottom of the wheel and the ground
         if (!touching && gapBelow > 14) continue;
-        const len = Math.hypot(50, yB - yA);
-        const nx = (yB - yA) / len, ny = -50 / len; // "up" out of the ground here
+        // How fast is the wheel moving away from the ground? Measured against the ground right under it AND
+        // a little ahead of it, and we take the smallest answer. A wheel starting up a hill is touching the
+        // steeper slope ahead of it, so it isn't really leaving the ground (that used to make the bottom of
+        // every hill feel like a rough edge that slowed you down).
         const v = body.velocity;
-        const away = v.x * nx + v.y * ny;
-        if (away > 0) Body.setVelocity(body, { x: v.x - nx * away * ANTI_HOP, y: v.y - ny * away * ANTI_HOP });
+        const dir = v.x >= 0 ? 1 : -1;
+        let away = Infinity, nx = 0, ny = -1;
+        // (we look as far ahead as the whole bike is long: when the FRONT wheel starts up a hill, the bike tilts
+        //  and lifts the back wheel too, and that's climbing, not bouncing)
+        for (const ahead of [0, 15, 30, 45, 60, 75, 90]) {
+          const sx = px + ahead * dir;
+          const a = groundYAt(this.track, sx - 25), b = groundYAt(this.track, sx + 25);
+          if (a === null || b === null) continue;
+          const len = Math.hypot(50, b - a);
+          const ax = (b - a) / len, ay = -50 / len; // "up" out of the ground there
+          const aw = v.x * ax + v.y * ay;
+          if (aw < away) { away = aw; nx = ax; ny = ay; }
+        }
+        if (away > 0 && away !== Infinity) Body.setVelocity(body, { x: v.x - nx * away * ANTI_HOP, y: v.y - ny * away * ANTI_HOP });
       }
     }
 
@@ -554,6 +598,7 @@ export class Level1Scene extends Phaser.Scene {
     const next = this.track.checkpoints[this.cpIndex + 1];
     if (next && frame.position.x > next.x && !this.crashed) {
       this.cpIndex++;
+      this.reachedCp = Math.max(this.reachedCp, this.cpIndex);
       this.flags[this.cpIndex].setTexture('flagOn');
       this.showToast(`Checkpoint ${this.cpIndex}!`);
       audio.sfx.checkpoint();

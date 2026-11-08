@@ -1,6 +1,7 @@
 import { makeTextures } from '../art.js';
 import { sunsetBackdrop, FONT } from '../ui.js';
 import { audio } from '../audio.js';
+import { gyro } from '../gyro.js';
 
 // Plays one of the story cutscenes, then moves on to the next scene.
 // Start it with:  this.scene.start('Cutscene', { id: 'intro', next: 'Level1' })
@@ -57,7 +58,7 @@ export class CutsceneScene extends Phaser.Scene {
     this.input.keyboard.on('keydown-ESC', () => this.finish());
 
     const { width: W, height: H } = this.scale;
-    this.ui(this.add.text(W - 16, H - 12, 'Space = next   Esc = skip', {
+    this.ui(this.add.text(W - 16, H - 12, 'Space / click / double flick = next   Esc = skip', {
       fontFamily: FONT, fontSize: '16px', color: '#ffffff',
     }).setOrigin(1, 1).setAlpha(0.6).setDepth(100));
 
@@ -134,6 +135,8 @@ export class CutsceneScene extends Phaser.Scene {
   // scripts can set c.onUpdate = (time, delta) => {...} for things that move every frame (scrolling, spinning)
   update(time, delta) {
     if (this.onUpdate && !this.done) this.onUpdate(time, delta);
+    // a double flick of the wrist sensor = next line (same as Space)
+    if (gyro.takeNext() && this.onAdvance) this.onAdvance();
   }
 
   // a swirling portal. Grow it with c.move(portal, { scale: 1 }).
@@ -342,13 +345,9 @@ export class CutsceneScene extends Phaser.Scene {
         this.box.setVisible(false);
         this.stillPlaying(resolve)();
       };
-      // fast (Demo) cutscenes move on to the next line by themselves, after enough time to read it:
-      // 1.6 seconds plus a little more for every letter (at most 4.5 seconds), in real time
-      const autoNext = () => {
-        if (!this.fast) return;
-        const readMs = Math.min(4500, 1600 + text.length * 40) * timeScale;
-        this.time.delayedCall(readMs, () => { if (this.onAdvance === next) next(); });
-      };
+      // (lines never move on by themselves, in any mode: the player moves on with Space / Enter / a click /
+      //  a double flick of the wrist sensor, so whoever is presenting controls the pace)
+      const autoNext = () => {};
       this.onAdvance = next;
     });
   }
@@ -586,15 +585,21 @@ async function ending(c) {
   rock.fillStyle(0x4a4456); rock.fillRect(0, ground + 8, W, H - ground);
   rock.fillStyle(0x6b6478); rock.fillRect(0, ground - 4, W, 16);
   rock.fillStyle(0x8a849a); rock.fillRect(0, ground - 4, W, 4);
-  // craters and pebbles on the surface
-  rock.fillStyle(0x3a3546);
-  [[160, 40, 90, 18], [520, 70, 140, 24], [900, 45, 110, 20], [1180, 80, 70, 14]].forEach(([x, y, w, h]) => rock.fillEllipse(x, ground + y, w, h));
-  rock.fillStyle(0x6b6478);
-  [[250, -8], [700, -6], [1050, -8]].forEach(([x, y]) => rock.fillEllipse(x, ground + y, 22, 12));
-  // the far edge of the asteroid with distant rocks, so it looks like a place
-  rock.fillStyle(0x5a5466);
-  rock.fillTriangle(60, ground - 4, 140, ground - 60, 220, ground - 4);
-  rock.fillTriangle(1000, ground - 4, 1090, ground - 80, 1200, ground - 4);
+  // craters, pebbles and distant rocks. They're on their own layer that SLIDES past during the chase at the
+  // start (drawn twice side by side, so it can scroll forever), then stops when Crumb catches up.
+  const scenery = c.add.container(0, 0).setDepth(5.5);
+  for (const ox of [0, W]) {
+    const d = c.add.graphics();
+    d.fillStyle(0x3a3546);
+    [[160, 40, 90, 18], [520, 70, 140, 24], [900, 45, 110, 20], [1180, 80, 70, 14]].forEach(([x, y, w, h]) => d.fillEllipse(ox + x, ground + y, w, h));
+    d.fillStyle(0x6b6478);
+    [[250, -8], [700, -6], [1050, -8]].forEach(([x, y]) => d.fillEllipse(ox + x, ground + y, 22, 12));
+    // the far edge of the asteroid with distant rocks, so it looks like a place
+    d.fillStyle(0x5a5466);
+    d.fillTriangle(ox + 60, ground - 4, ox + 140, ground - 60, ox + 220, ground - 4);
+    d.fillTriangle(ox + 1000, ground - 4, ox + 1090, ground - 80, ox + 1200, ground - 4);
+    scenery.add(d);
+  }
 
   // a tween you can "await", with an onUpdate (for curved jumps)
   const tweenP = (cfg) => new Promise((res) => {
@@ -602,14 +607,41 @@ async function ending(c) {
     c.tweens.add({ ...cfg, onComplete: go, onStop: go });
   });
 
-  // ---- the chase: the UFO zooms in, Crumb right behind it ----
-  const ufo = c.img('ufo', -220, 220, { scale: 1.3, depth: 8 });
-  const crumb = c.character('duckStand', -120, ground, 1.7);
+  // ---- the chase, still going: the asteroid slides past, the UFO flees ahead, and Crumb runs flat out
+  // and slowly catches up. Once he's caught it, everything slows to a stop and the scene carries on. ----
+  const ufo = c.img('ufo', 1050, 300, { scale: 1.3, depth: 8 });
+  const crumb = c.character('duckStand', 90, ground, 1.7);
   c.tweens.killTweensOf(crumb); // no idle bobbing during the action
+  const chase = { speed: 0.9 };  // how fast the ground slides past (pixels per ms)
+  const dust = c.add.particles(0, 0, 'pixel', {
+    speed: { min: 20, max: 70 }, angle: { min: 190, max: 240 }, lifespan: 450, gravityY: -40,
+    scale: { start: 1.6, end: 0 }, alpha: { start: 0.6, end: 0 }, tint: 0x8a849a, emitting: false,
+  }).setDepth(9);
+  let runTime = 0;
+  c.onUpdate = (time, delta) => {
+    scenery.x -= chase.speed * delta;
+    if (scenery.x <= -W) scenery.x += W;
+    if (chase.speed > 0.05) {
+      // running: quick little hops with a forward lean, kicking up dust
+      runTime += delta;
+      crumb.y = ground - Math.abs(Math.sin(runTime / 70)) * 14;
+      crumb.setAngle(8 + Math.sin(runTime / 70) * 4);
+      if (Math.floor(runTime / 70) % 2 === 0) dust.emitParticleAt(crumb.x - 30, ground - 4, 1);
+      ufo.y += Math.sin(runTime / 240) * 0.6; // the UFO wobbles as it flees
+    }
+  };
   audio.sfx.whoosh();
-  c.move(ufo, { x: 600, y: 250 }, 1500, 'Cubic.out');
-  await c.move(crumb, { x: 300 }, 1300, 'Quad.out');
+  // over a few seconds, Crumb closes the gap: he moves up the screen while the UFO drifts back to him
+  c.move(ufo, { x: 600 }, 4200, 'Sine.inOut');
+  const caughtUp = c.move(crumb, { x: 300 }, 4200, 'Sine.inOut');
+  await c.wait(900);
   await c.say('Crumb', 'You\'re not getting away this time!');
+  await caughtUp;
+  // caught it! everything slows down and stops, and the scene goes on from here
+  await c.move(chase, { speed: 0 }, 600, 'Quad.out');
+  c.onUpdate = null;
+  crumb.setY(ground).setAngle(0);
+  await c.move(ufo, { y: 330 }, 300, 'Sine.out'); // (low enough that Crumb riding on top stays below the speech box)
 
   // ---- Crumb leaps onto the UFO's dome ----
   audio.sfx.jump();
@@ -843,6 +875,5 @@ async function ending(c) {
   await new Promise((resolve) => {
     const done = () => { c.onAdvance = null; c.stillPlaying(resolve)(); };
     c.onAdvance = done;
-    if (c.fast) c.time.delayedCall(3500, () => { if (c.onAdvance === done) done(); });
   });
 }

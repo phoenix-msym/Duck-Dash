@@ -33,8 +33,25 @@ export function makeTrackBuilder(startX, startY) {
       return b;
     },
 
+    // the downhill you land on after a jump: steepest right at the top (where you come down, so you land
+    // smoothly along it instead of slamming flat into it), easing out to flat at the bottom so you roll
+    // straight into whatever comes next
+    landing(len, drop) {
+      const x0 = x, y0 = y;
+      for (let d = STEP; d <= len; d += STEP) {
+        const t = d / len;
+        push(x0 + d, y0 + drop * (1 - (1 - t) * (1 - t)));
+      }
+      if (x !== x0 + len) push(x0 + len, y0 + drop);
+      return b;
+    },
+
     // bumps that start and end at the same height. "count" = number of bumps
     hills(count, height, width) {
+      // Every hill is made wide enough for its height that, even at full speed, if the bike floats off the
+      // top it comes down on the far side of the SAME hill and rolls smoothly into the next one (instead of
+      // sailing over the dip and slamming into the face of the next hill).
+      width = Math.max(width, 85 * Math.sqrt(height));
       const x0 = x, y0 = y, len = count * width;
       for (let d = STEP / 2; d <= len; d += STEP / 2) {
         push(x0 + d, y0 - height * (1 - Math.cos((2 * Math.PI * d) / width)) / 2);
@@ -89,14 +106,27 @@ export function makeTrackBuilder(startX, startY) {
 }
 
 // Find the ground height under some x (used to place signs and respawn the bike).
+// (It's called many times every frame, so the first time it makes a sorted list of all the ground
+//  segments and after that finds the right one with a quick "binary search" instead of checking them all.)
 export function groundYAt(track, x) {
-  for (const piece of track.pieces) {
-    for (let i = 0; i < piece.length - 1; i++) {
-      const a = piece[i], c = piece[i + 1];
-      if (x >= a.x && x <= c.x) {
-        const t = c.x === a.x ? 0 : (x - a.x) / (c.x - a.x);
-        return a.y + (c.y - a.y) * t;
-      }
+  if (!track._segs) {
+    track._segs = [];
+    for (const piece of track.pieces) {
+      for (let i = 0; i < piece.length - 1; i++) track._segs.push([piece[i], piece[i + 1]]);
+    }
+    track._segs.sort((p, q) => p[0].x - q[0].x);
+  }
+  const segs = track._segs;
+  let lo = 0, hi = segs.length - 1, found = -1;
+  while (lo <= hi) { // the last segment that starts at or before x
+    const mid = (lo + hi) >> 1;
+    if (segs[mid][0].x <= x) { found = mid; lo = mid + 1; } else hi = mid - 1;
+  }
+  for (let k = found; k >= 0 && k >= found - 1; k--) { // (check one before too, for segments that touch)
+    const [a, c] = segs[k];
+    if (x >= a.x && x <= c.x) {
+      const t = c.x === a.x ? 0 : (x - a.x) / (c.x - a.x);
+      return a.y + (c.y - a.y) * t;
     }
   }
   return null; // over a gap
@@ -128,7 +158,7 @@ function sunsetRide() {
     .boost(180)
     .flat(350)
     .ramp(260, -110).airCrumbs(300, 110, 4).gap(260, 160)
-    .slope(950, 220).flat(300)
+    .landing(1400, 320).flat(300)
     .sign('Land on your WHEELS. Flags are checkpoints!', 0)
     .crumbs(450, 3)
     .flat(450);
@@ -139,7 +169,7 @@ function sunsetRide() {
     .boost(70)
     .flat(150)
     .ramp(320, -190).airCrumbs(420, 200, 5).gap(380, 320)
-    .slope(1300, 360).flat(300)
+    .landing(1300, 360).flat(300)
     .crumbs(1120, 4, 70)
     .hills(2, 150, 560)
     .flat(300);
@@ -152,7 +182,7 @@ function sunsetRide() {
     .boost(60)
     .flat(150)
     .ramp(260, -110).airCrumbs(320, 120, 3).gap(300, 60)
-    .slope(800, 180).flat(300)
+    .landing(1200, 270).flat(300)
     .sign('Next stop: the twilight hills!', 0)
     .flat(600);
 
@@ -175,14 +205,14 @@ function twilightHills() {
     .boost(80)
     .flat(200)
     .ramp(260, -110).airCrumbs(300, 110, 4).gap(260, 160)
-    .slope(950, 220).flat(300);
+    .landing(1400, 320).flat(300);
 
   // ---------- the big drop ----------
   t.checkpoint().flat(250)
     .ramp(740, -380).airCrumbs(460, 180, 5).gap(420, 480) // one smooth kicker (an uphill + a separate ramp left a bump)
-    .slope(1400, 400).flat(150).boost(60).flat(150)
+    .landing(1400, 400).flat(150).boost(60).flat(150)
     .ramp(320, -190).airCrumbs(420, 200, 5).gap(380, 320)
-    .slope(1300, 360).flat(300);
+    .landing(1300, 360).flat(300);
 
   // ---------- camel humps ----------
   t.checkpoint().flat(250)
@@ -194,7 +224,7 @@ function twilightHills() {
     .boost(40)
     .flat(150)
     .ramp(260, -110).airCrumbs(320, 120, 3).gap(300, 60)
-    .slope(1100, 250).flat(300)
+    .landing(1250, 285).flat(300)
     .sign('Stars are coming out... nearly at the edge of space!', 0)
     .flat(600);
 
@@ -217,14 +247,14 @@ function edgeOfSpace() {
     .boost(80)
     .flat(200)
     .ramp(260, -110).airCrumbs(300, 110, 4).gap(260, 160)
-    .slope(1250, 290).flat(300); // (long landing: the boost pad before this jump sends you far)
+    .landing(1600, 370).flat(300); // (long landing: the boost pad before this jump sends you far)
 
   // ---------- dusk, huge drops ----------
   t.checkpoint().flat(250)
     .ramp(740, -380).airCrumbs(460, 180, 5).gap(420, 480) // one smooth kicker (an uphill + a separate ramp left a bump)
-    .slope(1400, 400).flat(150).boost(60).flat(150)
+    .landing(1400, 400).flat(150).boost(60).flat(150)
     .ramp(260, -110).airCrumbs(320, 120, 3).gap(300, 60)
-    .slope(800, 180).flat(250)
+    .landing(800, 180).flat(250)
     .hills(1, 320, 1000)
     .flat(300);
 
@@ -234,7 +264,7 @@ function edgeOfSpace() {
     .boost(10)
     .flat(120)
     .ramp(400, -170).airCrumbs(500, 220, 6).gap(440, 360) // lower ramp + shorter gap to suit the slower bike
-    .slope(1500, 440).flat(300)
+    .landing(1500, 440).flat(300)
     .sign('The UFO is getting away!', 0)
     .crumbs(800, 3)
     .flat(800);
@@ -257,7 +287,7 @@ export function buildLevel1Demo() {
     .boost(40)
     .flat(150)
     .ramp(240, -100).airCrumbs(280, 100, 3).gap(240, 150)
-    .slope(1050, 300).flat(150); // long landing slopes, so even at top speed you land on the way down
+    .landing(1450, 415).flat(150); // long landing slopes, so even at top speed you land on the way down
 
   t.checkpoint().flat(100)
     .hills(1, 200, 700)
@@ -265,7 +295,7 @@ export function buildLevel1Demo() {
 
   t.checkpoint().flat(100)
     .ramp(260, -110).airCrumbs(300, 120, 3).gap(280, 100)
-    .slope(1000, 260).flat(150);
+    .landing(1000, 260).flat(150);
 
   // the big drop (added to make the demo a bit longer)
   t.checkpoint().flat(150)
@@ -273,12 +303,12 @@ export function buildLevel1Demo() {
     .hills(2, 150, 560)
     .flat(150)
     .ramp(740, -380).airCrumbs(460, 180, 5).gap(420, 480) // one smooth kicker (an uphill + a separate ramp left a bump)
-    .slope(1400, 400).flat(150);
+    .landing(1400, 400).flat(150);
 
   t.checkpoint().flat(100)
     .slope(500, 250).boost(10).flat(100)
     .ramp(380, -150).airCrumbs(420, 190, 5).gap(340, 320)
-    .slope(1350, 480).flat(150)
+    .landing(1450, 515).flat(150)
     .sign('The UFO is getting away!', 0)
     .flat(500);
 

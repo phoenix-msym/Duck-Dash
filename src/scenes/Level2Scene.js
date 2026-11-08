@@ -3,7 +3,7 @@ import { createControls } from '../controls.js';
 import { settings } from '../settings.js';
 import { gyro } from '../gyro.js';
 import { buildLevel2, buildLevel2Demo, makeEndlessTrack, LANES, LANES_PER_SIDE, SIDES, HOLE, PAD, CRACKED } from '../level2Track.js';
-import { FONT, eraseSprites, unerase, levelCompletePanel, fmtTime, crumbHud, makeButton, keyboardMenu, levelTitle } from '../ui.js';
+import { FONT, eraseSprites, unerase, levelCompletePanel, fmtTime, crumbHud, makeButton, keyboardMenu, levelTitle, checkpointBarClicks } from '../ui.js';
 import { STORY, storyIndex, startStoryLevel } from '../story.js';
 import { wallet } from '../wallet.js';
 import { audio } from '../audio.js';
@@ -21,6 +21,8 @@ const ENDLESS_SECTION = 200; // Endless mode: the colours and scenery change eve
 const FALL_DEPTH = -0.9;  // how far below the floor you fall (in tiles) before "Lost in space!" (was -1.6)
 const BOOST = 1.6;        // lily pad speed multiplier
 const BOOST_TIME = 1.2;   // seconds a lily pad boost lasts
+const GUM_SLOW = 0.5;     // running into a gumdrop: you run at half speed...
+const GUM_SLOW_TIME = 0.9; // ...for this many seconds
 const CRUMBLE_DELAY = 0.2; // seconds before a touched cracked tile falls (was 0.35)
 const CRUMBLE_AHEAD = 7;   // how many rows in front of you collapse when you step on a cracked tile
 const WIND = 2.0;         // lanes per second the wind pushes you
@@ -67,7 +69,7 @@ const THEMES = {
   desert:    { bgTop: 0x0c0603, bgBottom: 0x2a1406, tileA: 0xffc46b, tileB: 0xc0622e, nebula: 0xff9a3c, pattern: 'sides' },
   synthwave: { bgTop: 0x07010f, bgBottom: 0x1c0638, tileA: 0xb44cff, tileB: 0x2ee6ff, nebula: 0xff3cac, pattern: 'rings' },
   frost:     { bgTop: 0x01060f, bgBottom: 0x06203a, tileA: 0x3f86d8, tileB: 0x2a63b3, nebula: 0x9fe8ff, pattern: 'checker', windGlow: 0xe6fbff },
-  redAlert:  { bgTop: 0x0a0103, bgBottom: 0x200409, tileA: 0xff7a6e, tileB: 0x4a1a24, nebula: 0xff3049, pattern: 'checker' },
+  redAlert:  { bgTop: 0x0a0103, bgBottom: 0x200409, tileA: 0xff7a6e, tileB: 0xffc2b8, nebula: 0xff3049, pattern: 'checker' },
 };
 const PATTERNS = {
   checker: (r, l) => (Math.floor(r / 2) + l) % 2,
@@ -84,6 +86,15 @@ function mix(a, b, t) {
   const g = ((a >> 8) & 255) + ((((b >> 8) & 255) - ((a >> 8) & 255)) * t);
   const bl = (a & 255) + (((b & 255) - (a & 255)) * t);
   return (Math.round(r) << 16) | (Math.round(g) << 8) | Math.round(bl);
+}
+
+// Tiles must always be LIGHT, so the holes (which show the dark space behind) stand out clearly.
+// Any tile colour darker than this gets brightened towards white until it's light enough.
+const MIN_TILE_LIGHT = 0.6; // 0 = black, 1 = white
+function lightTile(c) {
+  const light = (0.299 * ((c >> 16) & 255) + 0.587 * ((c >> 8) & 255) + 0.114 * (c & 255)) / 255;
+  if (light >= MIN_TILE_LIGHT) return c;
+  return mix(c, 0xffffff, (MIN_TILE_LIGHT - light) / (1 - light));
 }
 
 const laneOf = (u) => ((Math.floor(u) % LANES) + LANES) % LANES;
@@ -194,6 +205,9 @@ export class Level2Scene extends Phaser.Scene {
     this.rows = this.endless ? this.track.rows : this.track.rows.map((r) => r.slice());
     this.crumbling = new Map(); // "row,lane" -> time (seconds) it falls
     this.boost = 0;
+    this.sticky = 0;
+    this.squished = new Set(); // gumdrops you've run into (they're squashed flat until you respawn)
+    this.carved = new Set();   // windy stretches whose wall has already dropped away this run
     this.bullets = [];
     this.lasers = [];
     // (Demo mode: the UFO starts shooting almost straight away, so the short boss part still shows a laser)
@@ -267,7 +281,8 @@ export class Level2Scene extends Phaser.Scene {
     const wantJump = c.forward > 0.5 || this.space.isDown || gyro.takeJump();
 
     this.boost = Math.max(0, this.boost - dt);
-    const speed = this.baseSpeed() * (this.boost > 0 ? BOOST : 1);
+    this.sticky = Math.max(0, (this.sticky || 0) - dt);
+    const speed = this.baseSpeed() * (this.boost > 0 ? BOOST : 1) * (this.sticky > 0 ? GUM_SLOW : 1);
     // Endless: build more tunnel before we run out
     if (this.endless && p.z > this.track.rows.length - 140) {
       this.track.extend(100);
@@ -275,6 +290,20 @@ export class Level2Scene extends Phaser.Scene {
     }
     p.z += speed * dt;
     p.u += (c.right - c.left) * SIDE_SPEED * dt;
+    // WIND THAT DROPS A WALL: just before a gust (while it's still far down the tunnel), the side of the
+    // tunnel next to you in the wind's direction falls away. Don't lean against the wind and you get
+    // blown off the edge. (It's worked out from where you are as you arrive, so it's always beside you.)
+    for (const w of this.track.winds) {
+      if (!w.dropWall || this.carved.has(w) || p.z < w.start - 40 || p.z > w.end) continue;
+      this.carved.add(w);
+      const mySide = Math.floor(laneOf(p.u) / LANES_PER_SIDE);
+      const gone = (mySide + (w.dir > 0 ? 1 : SIDES - 1)) % SIDES; // the side the wind pushes you towards
+      for (let r = w.start; r < w.end; r++) {
+        if (!this.rows[r]) continue;
+        for (let l = gone * LANES_PER_SIDE; l < (gone + 1) * LANES_PER_SIDE; l++) this.rows[r][l] = HOLE;
+      }
+    }
+
     const wind = this.windAt(p.z);
     if (wind) {
       p.u += wind.dir * WIND * dt;
@@ -324,17 +353,27 @@ export class Level2Scene extends Phaser.Scene {
       if (p.h < FALL_DEPTH && !p.dead) this.die('Lost in space!');
     }
 
-    // candy obstacles: canes are too tall to jump (steer around them), gumdrops can be jumped over
+    // candy obstacles: candy canes knock you out (steer around them); gumdrops are sticky: running into one
+    // squishes it and slows you down for a moment (jump over them to keep your speed)
     for (const c of this.track.props || []) {
-      if (Math.abs(c.z - p.z) > 0.35) continue;
+      if (Math.abs(c.z - p.z) > 0.35 || this.squished.has(c)) continue;
       const tall = c.kind === 'cane' ? 1.25 : 0.55; // (a jump only clears a cane right at its very top)
-      if (ringGap(c.lane + 0.5, p.u) < 0.6 && p.h < tall && p.h > -0.2) { this.die(c.kind === 'cane' ? 'Bonked a candy cane!' : 'Stuck in a gumdrop!'); return; }
+      if (ringGap(c.lane + 0.5, p.u) < 0.6 && p.h < tall && p.h > -0.2) {
+        if (c.kind === 'cane') { this.die('Bonked a candy cane!'); return; }
+        this.squished.add(c);
+        this.sticky = GUM_SLOW_TIME;
+        this.boost = 0;
+        audio.sfx.land();
+        this.cameras.main.shake(120, 0.004);
+        this.showToast('Sticky! Slowed down');
+      }
     }
 
     // checkpoints
     const next = this.track.checkpoints[this.cpIndex + 1];
     if (next !== undefined && p.z > next) {
       this.cpIndex++;
+      this.reachedCp = Math.max(this.reachedCp || 0, this.cpIndex);
       const bossNow = this.sectionStyle() === 4 && this.sectionStyle(this.cpIndex - 1) !== 4;
       this.showToast(bossNow ? 'BOSS FIGHT!' : `Checkpoint ${this.cpIndex}!`);
       audio.sfx.checkpoint();
@@ -612,7 +651,7 @@ export class Level2Scene extends Phaser.Scene {
       if (z0 - camZ < NEAR) z0 = camZ + NEAR;
       const fog = Phaser.Math.Clamp((z0 - camZ - 6) / (VIEW_ROWS - 6), 0, 1);
       const [a, b] = edges[l];
-      let base = (PATTERNS[col.pattern] || PATTERNS.checker)(r, l) ? col.tileA : col.tileB;
+      let base = lightTile((PATTERNS[col.pattern] || PATTERNS.checker)(r, l) ? col.tileA : col.tileB);
       if (type === PAD) base = 0x1f4f86; // pond water under the lily pad
       if (type === CRACKED) base = mix(base, 0x2a1a10, 0.45);
       if (type === CRACKED && this.crumbling.has(`${r},${l}`)) base = flash ? 0xff3b3b : 0xffffff; // about to fall!
@@ -625,7 +664,8 @@ export class Level2Scene extends Phaser.Scene {
         base = mix(base, col.windGlow ?? 0xc8f6ff, 0.6 * wave * wave);
       }
       const p1 = proj(a.x, a.y, z0), p2 = proj(b.x, b.y, z0), p3 = proj(b.x, b.y, z1), p4 = proj(a.x, a.y, z1);
-      g.fillStyle(mix(base, fogCol, fog * fog), 1);
+      // (far tiles only fade a little, so even far away a hole (dark) still stands out from the tiles)
+      g.fillStyle(mix(base, fogCol, fog * fog * 0.5), 1);
       g.fillPoints([p1, p2, p3, p4], true);
       if (type === PAD) {
           // A round lily pad lying on the tile, with a notch cut out and a little pink flower.
@@ -813,6 +853,10 @@ export class Level2Scene extends Phaser.Scene {
           fx.lineBetween(prev.x, prev.y, q.x, q.y);
           prev = q;
         }
+      } else if (this.squished && this.squished.has(c)) {
+        // a gumdrop you ran into: squashed flat into a sticky puddle
+        const col = [0xff5fb8, 0x6dff8a, 0xb46bff, 0xffa53c][Math.floor(c.seed * 4)];
+        fx.fillStyle(col, 0.85 * fade); fx.fillEllipse(foot.x, foot.y, unit * 0.9, unit * 0.22);
       } else {
         // a round gumdrop with sugar sparkles
         const col = [0xff5fb8, 0x6dff8a, 0xb46bff, 0xffa53c][Math.floor(c.seed * 4)];
@@ -930,6 +974,15 @@ export class Level2Scene extends Phaser.Scene {
     this.timeText = this.add.text(20, 46, '', style).setDepth(50);
     this.add.text(W - 20, 16, `${this.endless ? 'R = restart' : 'R = back to checkpoint'}   P / Esc = pause`, { ...style, fontSize: '18px' }).setOrigin(1, 0).setDepth(50);
     this.progress = this.add.graphics().setDepth(50);
+    // click a checkpoint dot on the bar to go back to it (any checkpoint you've reached so far)
+    this.reachedCp = 0;
+    if (!this.endless) {
+      const end = this.track.finishRow;
+      this.barDots = this.track.checkpoints.map((cp) => W / 2 - 200 + (400 * cp) / end);
+      this.barClicks = checkpointBarClicks(this, this.barDots, 30,
+        (i) => !this.finished && i <= this.reachedCp,
+        (i) => { this.cpIndex = i; this.spawn(); this.showToast(`Back to checkpoint ${i}`); });
+    }
     this.hintText = this.add.text(W / 2, H - 70, '', {
       ...style, fontSize: '30px', fontStyle: 'bold', align: 'center', wordWrap: { width: 1000 },
     }).setOrigin(0.5).setDepth(50);
@@ -968,8 +1021,12 @@ export class Level2Scene extends Phaser.Scene {
     this.progress.fillStyle(0x000000, 0.5); this.progress.fillRoundedRect(bx, by - 6, bw, 12, 6);
     this.progress.fillStyle(0xffd23f); this.progress.fillRoundedRect(bx, by - 6, Math.max(12, bw * t), 12, 6);
     this.track.checkpoints.forEach((cp, i) => {
-      this.progress.fillStyle(i <= this.cpIndex ? 0x3ddc84 : 0xfff4dc);
-      this.progress.fillCircle(bx + (bw * cp) / end, by, 5);
+      const x = this.barDots[i];
+      const canClick = i <= this.reachedCp && !this.finished;
+      const hover = canClick && this.barClicks.hovered === i;
+      if (hover) { this.progress.lineStyle(3, 0xffffff, 1); this.progress.strokeCircle(x, by, 10); } // ring under the mouse
+      this.progress.fillStyle(canClick ? 0x3ddc84 : 0xfff4dc);
+      this.progress.fillCircle(x, by, hover ? 7 : 5);
     });
     this.progress.fillStyle(0xb6ff3b); this.progress.fillCircle(bx + bw, by, 8);
     }
@@ -983,9 +1040,8 @@ export class Level2Scene extends Phaser.Scene {
     const soon = this.track.winds.find((w) => p.z > w.start - 30 && p.z < w.end);
     if (soon && !this.finished) {
       const arrow = soon.dir > 0 ? '→ → →' : '← ← ←';
-      const lean = soon.dir > 0 ? 'LEAN LEFT!' : 'LEAN RIGHT!';
       const before = p.z < soon.start;
-      this.warnText.setText(before ? `⚠ WARNING: WIND ⚠\n${arrow}` : `${arrow}  ${lean}  ${arrow}`)
+      this.warnText.setText(before ? `⚠ WARNING: WIND ⚠\n${arrow}` : `${arrow}     ${arrow}`) // (just arrows while it blows)
         .setAlpha(blink ? 1 : 0.45)
         .setScale(1 + Math.sin(now * 12) * 0.06); // pulsing, so it really grabs your attention
       // a warning siren beep just before the wind hits
