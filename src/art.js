@@ -8,13 +8,18 @@ const YELLOW = 0xffd23f;
 const YELLOW_DARK = 0xe8b31e;
 const ORANGE = 0xff8c1a;
 
-// What Crumb is wearing right now (picked in the shop)
+// What Crumb is wearing right now (picked in the shop).
+// "preview" lets the shop try an item on without buying it, e.g. { hat: <the crown item> }.
+let preview = {};
 function look() {
-  return { scarf: wallet.equipped('scarf').color, bike: wallet.equipped('bike').colors, hat: wallet.equipped('hat').id };
+  const pick = (cat) => preview[cat] || wallet.equipped(cat);
+  return { scarf: pick('scarf').color, bike: pick('bike').colors, hat: pick('hat').id };
 }
 
-// Redraw every picture of Crumb, e.g. after buying something in the shop
-export function refreshLook(scene) {
+// Redraw every picture of Crumb, e.g. after buying something in the shop.
+// refreshLook(scene, { hat: item }) = try that item on; refreshLook(scene) = back to what Crumb really wears.
+export function refreshLook(scene, tryOn = {}) {
+  preview = tryOn;
   ['bike', 'bikeEmpty', 'duckStand', 'duckRunA', 'duckRunB', 'duckJump'].forEach((k) => {
     if (scene.textures.exists(k)) scene.textures.remove(k);
   });
@@ -407,14 +412,22 @@ function makeWheel(scene) {
 }
 
 // The mysterious "alien" UFO. The pilot is just a dark shape with glowing eyes... for now.
+// Also makes 'ufoEmpty': the same UFO with nobody inside (for after the pilot climbs out).
 function makeUfo(scene) {
+  drawUfo(scene, 'ufo', true);
+  drawUfo(scene, 'ufoEmpty', false);
+}
+
+function drawUfo(scene, key, withPilot) {
   const g = scene.make.graphics({ add: false });
   // glass dome
   g.fillStyle(0x9fe7ff, 0.55); g.fillEllipse(80, 34, 64, 50);
   // pilot silhouette
-  g.fillStyle(0x161126); g.fillEllipse(80, 40, 30, 32);
-  g.fillCircle(80, 26, 11);
-  g.fillStyle(0xb6ff3b); g.fillEllipse(76, 25, 5, 3); g.fillEllipse(85, 25, 5, 3);
+  if (withPilot) {
+    g.fillStyle(0x161126); g.fillEllipse(80, 40, 30, 32);
+    g.fillCircle(80, 26, 11);
+    g.fillStyle(0xb6ff3b); g.fillEllipse(76, 25, 5, 3); g.fillEllipse(85, 25, 5, 3);
+  }
   // dome shine
   g.fillStyle(0xffffff, 0.6); g.fillEllipse(66, 24, 8, 14);
   // saucer
@@ -423,7 +436,7 @@ function makeUfo(scene) {
   // lights
   const colors = [0xff5d73, 0xffe14d, 0x5dffb0, 0x5dc8ff, 0xff5d73];
   colors.forEach((c, i) => { g.fillStyle(c); g.fillCircle(30 + i * 25, 58, 5); });
-  g.generateTexture('ufo', 160, 76);
+  g.generateTexture(key, 160, 76);
   g.destroy();
 }
 

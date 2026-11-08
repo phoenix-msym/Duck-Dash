@@ -2,6 +2,28 @@
 import { audio } from './audio.js';
 import { wallet } from './wallet.js';
 
+// ------------------------------------------------------------------ fullscreen
+// Switch the whole game between a window and fullscreen. (Must be called from a click or key press:
+// browsers only allow fullscreen when the player asked for it.)
+export function toggleFullscreen(scene) {
+  if (scene.scale.isFullscreen) scene.scale.stopFullscreen();
+  else scene.scale.startFullscreen();
+}
+
+// A button that says "Fullscreen" or "Exit Fullscreen" and keeps its label right.
+export function fullscreenButton(scene, x, y, opts = {}) {
+  const label = () => (scene.scale.isFullscreen ? 'Exit Fullscreen' : 'Fullscreen');
+  const b = makeButton(scene, x, y, label(), () => toggleFullscreen(scene), opts);
+  const refresh = () => { if (b.text.active) b.text.setText(label()); };
+  scene.scale.on('enterfullscreen', refresh);
+  scene.scale.on('leavefullscreen', refresh);
+  scene.events.once('shutdown', () => {
+    scene.scale.off('enterfullscreen', refresh);
+    scene.scale.off('leavefullscreen', refresh);
+  });
+  return b;
+}
+
 // ------------------------------------------------------------------ "erase" effect when Crumb dies
 // The picture wipes away from the top down, and little yellow bits fly off the wiping edge.
 // sprites: the images to erase (the first one sets where the bits come from).

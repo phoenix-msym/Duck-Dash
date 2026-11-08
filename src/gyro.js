@@ -11,6 +11,7 @@ import { externalInput } from './controls.js';
 
 const BAUD = 115200;
 const DEAD = 12;   // degrees from neutral before the duck starts to move
+const DEAD_RUN = 6; // run level: half the tilt before Crumb starts moving left/right, so he reacts sooner
 const FULL = 30;   // degrees for a full lean, gas, or brake
 const CALIB_SAMPLES = 25;
 // How strongly left/right tilt steers (1 = full). Lower = less sensitive.
@@ -20,11 +21,11 @@ const FLICK_GAP = 700;   // ms: flicks farther apart than this start a new seque
 const JUMP_HOLD = 250;   // how long a double-flick jump stays available
 const DOUBLE_HOLD = 600; // how long the third flick can still double jump
 
-function tiltAmount(delta) {
+function tiltAmount(delta, dead = DEAD) {
   let d = delta;
   if (d > 180) d -= 360;
   if (d < -180) d += 360;
-  const mag = Math.min(1, Math.max(0, (Math.abs(d) - DEAD) / (FULL - DEAD)));
+  const mag = Math.min(1, Math.max(0, (Math.abs(d) - dead) / (FULL - dead)));
   return Math.sign(d) * mag;
 }
 
@@ -225,8 +226,9 @@ export function syncGyro() {
   const stale = performance.now() - gyro.lastPacket > 500;
   let forward = 0, back = 0, left = 0, right = 0;
   if (!stale && gyro.ready()) {
-    const sens = currentLevel() === 'Level2' ? LEAN_SENS_RUN : LEAN_SENS_BIKE;
-    const lean = tiltAmount(gyro.roll - gyro.roll0) * sens;
+    const run = currentLevel() === 'Level2';
+    const sens = run ? LEAN_SENS_RUN : LEAN_SENS_BIKE;
+    const lean = tiltAmount(gyro.roll - gyro.roll0, run ? DEAD_RUN : DEAD) * sens;
     if (lean > 0) right = lean;
     if (lean < 0) left = -lean;
     // Finger tilt is gas and brake on the bike. The tunnel ignores it.

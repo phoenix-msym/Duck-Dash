@@ -18,15 +18,24 @@ const SCRIPTS = { intro, middle, ending };
 export class CutsceneScene extends Phaser.Scene {
   constructor() { super('Cutscene'); }
 
+  // data: { id, next, nextData, fast }
+  //   nextData = what to pass to the next scene (e.g. { mode: 'demo' })
+  //   fast     = Demo mode: everything plays 1.6x faster and lines move on by themselves
   init(data) {
     this.cutsceneId = data.id || 'intro';
     this.nextScene = data.next || 'Menu';
+    this.nextData = data.nextData;
+    this.fast = !!data.fast;
   }
 
   create() {
     makeTextures(this);
     this.done = false;
     this.onUpdate = null;
+    // Demo mode plays the cutscene faster (all animations, waits and typing), Story mode at normal speed
+    const speed = this.fast ? 1.6 : 1;
+    this.time.timeScale = speed;
+    this.tweens.timeScale = speed;
     this.runId = (this.runId || 0) + 1;
     // Two cameras: the main one shows the world (and can zoom in), the UI one shows the speech box,
     // title cards and flashes at normal size, so zooming never makes the text huge.
@@ -63,7 +72,7 @@ export class CutsceneScene extends Phaser.Scene {
     this.done = true;
     this.uiCam.fadeOut(400, 0, 0, 0);
     this.cameras.main.fadeOut(400, 0, 0, 0);
-    this.cameras.main.once('camerafadeoutcomplete', () => this.scene.start(this.nextScene));
+    this.cameras.main.once('camerafadeoutcomplete', () => this.scene.start(this.nextScene, this.nextData));
   }
 
   // mark something as UI: drawn by the UI camera only (never zoomed)
@@ -316,18 +325,24 @@ export class CutsceneScene extends Phaser.Scene {
           shown++;
           this.lineText.setText(text.slice(0, shown));
           if (shown % 3 === 1 && text[shown - 1] !== ' ') audio.sfx.talk(name); // little voice blips
-          if (shown >= text.length) this.arrow.setVisible(true);
+          if (shown >= text.length) { this.arrow.setVisible(true); autoNext(); }
         },
       });
-      this.onAdvance = () => {
+      const next = () => {
         if (shown < text.length) { // first press: finish typing the line
           typer.remove(); shown = text.length; this.lineText.setText(text); this.arrow.setVisible(true);
+          autoNext();
           return;
         }
         this.onAdvance = null;
         this.box.setVisible(false);
         this.stillPlaying(resolve)();
       };
+      // fast (Demo) cutscenes move on to the next line by themselves after a short read
+      const autoNext = () => {
+        if (this.fast) this.time.delayedCall(1500, () => { if (this.onAdvance === next) next(); });
+      };
+      this.onAdvance = next;
     });
   }
 
@@ -574,13 +589,86 @@ async function ending(c) {
   rock.fillTriangle(60, ground - 4, 140, ground - 60, 220, ground - 4);
   rock.fillTriangle(1000, ground - 4, 1090, ground - 80, 1200, ground - 4);
 
-  // the UFO sputters in, smoking, and crash-lands
-  const ufo = c.img('ufo', -200, 120, { scale: 1.3, depth: 8 });
+  // a tween you can "await", with an onUpdate (for curved jumps)
+  const tweenP = (cfg) => new Promise((res) => {
+    const go = c.stillPlaying(res);
+    c.tweens.add({ ...cfg, onComplete: go, onStop: go });
+  });
+
+  // ---- the chase: the UFO zooms in, Crumb right behind it ----
+  const ufo = c.img('ufo', -220, 220, { scale: 1.3, depth: 8 });
+  const crumb = c.character('duckStand', -120, ground, 1.7);
+  c.tweens.killTweensOf(crumb); // no idle bobbing during the action
+  audio.sfx.whoosh();
+  c.move(ufo, { x: 600, y: 250 }, 1500, 'Cubic.out');
+  await c.move(crumb, { x: 300 }, 1300, 'Quad.out');
+  await c.say('Crumb', 'You\'re not getting away this time!');
+
+  // ---- Crumb leaps onto the UFO's dome ----
+  audio.sfx.jump();
+  const sx = crumb.x, sy = crumb.y;
+  const jump = { t: 0 };
+  await tweenP({
+    targets: jump, t: 1, duration: 700, ease: 'Sine.inOut',
+    onUpdate: () => {
+      const tx = ufo.x + 8, ty = ufo.y - 30;
+      crumb.setPosition(sx + (tx - sx) * jump.t, sy + (ty - sy) * jump.t - Math.sin(Math.PI * jump.t) * 230);
+      crumb.setAngle(jump.t * 360);
+    },
+  });
+  audio.sfx.land();
+  // ride on top of the UFO (Crumb sticks to it while it moves)
+  const peck = { a: 0 };
+  c.onUpdate = () => { crumb.setPosition(ufo.x + 8, ufo.y - 30).setAngle(ufo.angle + peck.a); };
+  c.tweens.add({ targets: ufo, y: ufo.y - 12, duration: 300, yoyo: true, repeat: 1, ease: 'Sine.inOut' });
+  await c.say('???', 'HEY! Get off my saucer!');
+
+  // ---- PECK! PECK! PECK! ----
+  const peckSparks = c.add.particles(0, 0, 'pixel', {
+    speed: { min: 80, max: 260 }, lifespan: 450, gravityY: 300, scale: { start: 1, end: 0 },
+    tint: [0xffe14d, 0xffffff, 0xff8c1a], emitting: false,
+  }).setDepth(12);
+  for (let i = 0; i < 3; i++) {
+    await tweenP({ targets: peck, a: 40, duration: 90, yoyo: true, ease: 'Quad.out' });
+    const bx = ufo.x + 60, by = ufo.y - 40;
+    peckSparks.explode(14, bx, by);
+    audio.sfx.bonk();
+    c.cameras.main.shake(140, 0.006);
+    const word = c.add.text(bx + 20, by - 30, i < 2 ? 'PECK!' : 'CRACK!', {
+      fontFamily: FONT, fontSize: i < 2 ? '34px' : '52px', fontStyle: 'bold', color: '#ffe066', stroke: '#3b1d4a', strokeThickness: 7,
+    }).setOrigin(0.5).setDepth(40);
+    c.tweens.add({ targets: word, y: word.y - 50, alpha: 0, duration: 800, onComplete: () => word.destroy() });
+    c.tweens.add({ targets: ufo, angle: i % 2 ? 10 : -10, duration: 80, yoyo: true });
+    await c.wait(i < 2 ? 280 : 400);
+  }
+
+  // ---- the UFO breaks: smoke, flickering lights, and it swerves out of control ----
   const smoke = c.add.particles(0, 0, 'glow', {
     follow: ufo, speed: 30, scale: { start: 0.25, end: 0.6 }, alpha: { start: 0.5, end: 0 },
-    tint: 0x555555, lifespan: 1200, frequency: 80,
+    tint: 0x555555, lifespan: 1200, frequency: 60,
   }).setDepth(7);
-  await c.move(ufo, { x: 760, y: ground - 30, angle: 14 }, 2200, 'Quad.in'); // lands with its bottom on the rock
+  c.time.addEvent({ delay: 90, repeat: 25, callback: () => ufo.setTint(ufo.isTinted ? 0xffffff : 0xff6060) });
+  await c.say('???', 'No no NO! My controls!!');
+  audio.sfx.whoosh();
+  await c.move(ufo, { x: 950, y: 150, angle: -25 }, 450, 'Sine.inOut');
+  audio.sfx.whoosh();
+  await c.move(ufo, { x: 420, y: 230, angle: 25 }, 450, 'Sine.inOut');
+  // Crumb jumps off just in time
+  c.onUpdate = null;
+  audio.sfx.jump();
+  const jx = crumb.x, jy = crumb.y, off = { t: 0 };
+  tweenP({
+    targets: off, t: 1, duration: 650, ease: 'Sine.in',
+    onUpdate: () => {
+      crumb.setPosition(jx + (380 - jx) * off.t, jy + (ground - jy) * off.t - Math.sin(Math.PI * off.t) * 120);
+      crumb.setAngle(-360 * off.t);
+    },
+  }).then(() => { crumb.setAngle(0); audio.sfx.land(); });
+  audio.sfx.whoosh();
+  await c.move(ufo, { x: 1000, y: 140, angle: -40 }, 500, 'Sine.inOut');
+  // ...and it spirals down and crashes into the little planet
+  await c.move(ufo, { x: 760, y: ground - 30, angle: 374 }, 1100, 'Quad.in'); // lands with its bottom on the rock
+  ufo.clearTint().setAngle(14);
   c.cameras.main.shake(500, 0.012);
   audio.sfx.crash();
   smoke.setFrequency(160); // keeps smoking gently
@@ -630,9 +718,9 @@ async function ending(c) {
   }).setDepth(10);
   await c.wait(900);
 
-  // Crumb runs in, and the camera moves in closer for the big conversation
-  const crumb = c.character('duckStand', -100, ground, 1.7);
-  await c.move(crumb, { x: 380 }, 1200, 'Quad.out');
+  // Crumb is back on the ground (breathing again), and the camera moves in closer for the big conversation
+  crumb.setPosition(380, ground).setAngle(0);
+  c.tweens.add({ targets: crumb, scaleY: 1.7 * 0.96, duration: 600, yoyo: true, repeat: -1, ease: 'Sine.inOut' });
   await c.zoomTo(1.3, 580, 440, 1100);
   await c.say('Crumb', 'End of the line, egg thief!');
   await c.say('???', 'Ugh... my beautiful saucer...');
@@ -643,6 +731,7 @@ async function ending(c) {
   const pigeon = c.img('pigeon', 760, ground, { origin: [0.5, 1], scale: 1.7, depth: 9 }).setAlpha(0).setTint(0x000000);
   c.actors.Pigeon = pigeon;
   c.addShadow(pigeon, ground, 75);
+  ufo.setTexture('ufoEmpty'); // the pilot has climbed out, so the dome is empty now
   await c.move(pigeon, { alpha: 1, x: 640 }, 900);
   await c.say('???', '...');
   audio.sfx.reveal();
@@ -743,6 +832,10 @@ async function ending(c) {
     fontFamily: FONT, fontSize: '22px', color: '#fff4dc', stroke: '#3b1d4a', strokeThickness: 5,
   }).setOrigin(0.5).setDepth(96).setAlpha(0));
   c.tweens.add({ targets: hint, alpha: { from: 0.3, to: 1 }, duration: 700, yoyo: true, repeat: -1 });
-  // wait for Space / Enter / click without opening a speech box
-  await new Promise((resolve) => { c.onAdvance = () => { c.onAdvance = null; c.stillPlaying(resolve)(); }; });
+  // wait for Space / Enter / click without opening a speech box (Demo mode also moves on by itself)
+  await new Promise((resolve) => {
+    const done = () => { c.onAdvance = null; c.stillPlaying(resolve)(); };
+    c.onAdvance = done;
+    if (c.fast) c.time.delayedCall(3500, () => { if (c.onAdvance === done) done(); });
+  });
 }

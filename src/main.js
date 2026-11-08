@@ -5,6 +5,7 @@ import { Level2Scene } from './scenes/Level2Scene.js';
 import { CutsceneScene } from './scenes/CutsceneScene.js';
 import { PauseScene } from './scenes/PauseScene.js';
 import { ShopScene } from './scenes/ShopScene.js';
+import { ModeSelectScene } from './scenes/ModeSelectScene.js';
 import { reconnectGyro } from './gyro.js';
 
 const game = new Phaser.Game({
@@ -18,7 +19,7 @@ const game = new Phaser.Game({
     default: 'matter',
     matter: { gravity: { y: 1 }, positionIterations: 8, velocityIterations: 6, debug: false },
   },
-  scene: [MenuScene, SettingsScene, Level1Scene, Level2Scene, CutsceneScene, PauseScene, ShopScene],
+  scene: [MenuScene, SettingsScene, Level1Scene, Level2Scene, CutsceneScene, PauseScene, ShopScene, ModeSelectScene],
 });
 
 // Testing shortcuts:
@@ -36,4 +37,11 @@ game.events.once('ready', () => {
 });
 
 window.game = game; // handy for poking at things in the browser console
+
+// F = fullscreen on / off, from anywhere in the game
+window.addEventListener('keydown', (e) => {
+  if (e.key !== 'f' && e.key !== 'F') return;
+  if (game.scale.isFullscreen) game.scale.stopFullscreen();
+  else game.scale.startFullscreen();
+});
 reconnectGyro();

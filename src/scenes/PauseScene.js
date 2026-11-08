@@ -1,4 +1,4 @@
-import { makeButton, keyboardMenu, FONT } from '../ui.js';
+import { makeButton, keyboardMenu, fullscreenButton, FONT } from '../ui.js';
 import { audio } from '../audio.js';
 
 // The pause screen. It sits on top of a level while the level is frozen underneath.
@@ -13,22 +13,23 @@ export class PauseScene extends Phaser.Scene {
     const { width: W, height: H } = this.scale;
     this.add.rectangle(W / 2, H / 2, W, H, 0x0d0420, 0.6);
     const panel = this.add.graphics();
-    panel.fillStyle(0x1a1035, 0.92); panel.fillRoundedRect(W / 2 - 260, H / 2 - 210, 520, 420, 28);
-    panel.lineStyle(4, 0xfff4dc, 0.9); panel.strokeRoundedRect(W / 2 - 260, H / 2 - 210, 520, 420, 28);
-    this.add.text(W / 2, H / 2 - 150, 'Paused', {
+    panel.fillStyle(0x1a1035, 0.92); panel.fillRoundedRect(W / 2 - 260, H / 2 - 245, 520, 490, 28);
+    panel.lineStyle(4, 0xfff4dc, 0.9); panel.strokeRoundedRect(W / 2 - 260, H / 2 - 245, 520, 490, 28);
+    this.add.text(W / 2, H / 2 - 185, 'Paused', {
       fontFamily: FONT, fontSize: '60px', fontStyle: 'bold', color: '#fff4dc', stroke: '#3b1d4a', strokeThickness: 8,
     }).setOrigin(0.5);
 
     const opts = { w: 340, h: 60, size: 28 };
     const buttons = [
-      makeButton(this, W / 2, H / 2 - 50, 'Resume', () => this.resume(), opts),
-      makeButton(this, W / 2, H / 2 + 30, 'Back to checkpoint', () => this.toCheckpoint(), opts),
-      makeButton(this, W / 2, H / 2 + 110, 'Main menu', () => this.toMenu(), opts),
+      makeButton(this, W / 2, H / 2 - 95, 'Resume', () => this.resume(), opts),
+      makeButton(this, W / 2, H / 2 - 20, this.scene.get(this.from).endless ? 'Restart run' : 'Back to checkpoint', () => this.toCheckpoint(), opts),
+      fullscreenButton(this, W / 2, H / 2 + 55, opts),
+      makeButton(this, W / 2, H / 2 + 130, 'Main menu', () => this.toMenu(), opts),
     ];
     keyboardMenu(this, buttons);
     this.input.keyboard.on('keydown-ESC', () => this.resume());
     this.input.keyboard.on('keydown-P', () => this.resume());
-    this.add.text(W / 2, H / 2 + 180, 'Esc or P = keep playing', {
+    this.add.text(W / 2, H / 2 + 200, 'Esc or P = keep playing   •   F = fullscreen', {
       fontFamily: FONT, fontSize: '18px', color: '#fff4dc',
     }).setOrigin(0.5).setAlpha(0.7);
   }
@@ -40,6 +41,7 @@ export class PauseScene extends Phaser.Scene {
 
   toCheckpoint() {
     const level = this.scene.get(this.from);
+    if (level.endless) { this.scene.stop(); level.scene.restart({ mode: 'endless' }); return; } // Endless: new run
     if (level.respawn) level.respawn();      // Level 1
     else if (level.spawn) level.spawn();     // Level 2
     this.resume();

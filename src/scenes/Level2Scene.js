@@ -2,8 +2,9 @@ import { makeTextures } from '../art.js';
 import { createControls } from '../controls.js';
 import { settings } from '../settings.js';
 import { gyro } from '../gyro.js';
-import { buildLevel2, LANES, LANES_PER_SIDE, SIDES, HOLE, PAD, CRACKED } from '../level2Track.js';
-import { FONT, eraseSprites, unerase, levelCompletePanel, fmtTime, crumbHud } from '../ui.js';
+import { buildLevel2, buildLevel2Demo, makeEndlessTrack, LANES, LANES_PER_SIDE, SIDES, HOLE, PAD, CRACKED } from '../level2Track.js';
+import { FONT, eraseSprites, unerase, levelCompletePanel, fmtTime, crumbHud, makeButton, keyboardMenu } from '../ui.js';
+import { wallet } from '../wallet.js';
 import { audio } from '../audio.js';
 import { addPauseButton } from './PauseScene.js';
 import { level2Scenery } from '../scenery.js';
@@ -15,10 +16,12 @@ const JUMP_POWER = 10.2;
 const GRAVITY = 34.6;
 const FAST_FALL = 2.5;    // gravity multiplier while holding S in the air
 const COYOTE_TIME = 0.12; // seconds you can still jump after running off an edge
+const ENDLESS_SECTION = 200; // Endless mode: the colours and scenery change every this many rows
 const FALL_DEPTH = -0.9;  // how far below the floor you fall (in tiles) before "Lost in space!" (was -1.6)
 const BOOST = 1.6;        // lily pad speed multiplier
 const BOOST_TIME = 1.2;   // seconds a lily pad boost lasts
-const CRUMBLE_DELAY = 0.35;// seconds before a touched cracked tile falls
+const CRUMBLE_DELAY = 0.2; // seconds before a touched cracked tile falls (was 0.35)
+const CRUMBLE_AHEAD = 7;   // how many rows in front of you collapse when you step on a cracked tile
 const WIND = 2.0;         // lanes per second the wind pushes you
 const STAR_LIMITS = [75, 100]; // seconds: under the first = 3 stars, under the second = 2 stars
 const ROCK_EVERY = 0.55;  // seconds between asteroids in the asteroid section
@@ -81,13 +84,19 @@ function wallPoint(u, h) {
 export class Level2Scene extends Phaser.Scene {
   constructor() { super('Level2'); }
 
+  // mode: 'story' (normal), 'demo' (short showcase) or 'endless' (infinite, one life)
+  init(data) {
+    this.mode = (data && data.mode) || 'story';
+    this.endless = this.mode === 'endless';
+  }
+
   create() {
     makeTextures(this);
     const { width: W, height: H } = this.scale;
     this.cx = W / 2; this.cy = H / 2 - 40;
     this.controls = createControls(this);
     this.space = this.input.keyboard.addKey('SPACE');
-    this.track = buildLevel2();
+    this.track = this.endless ? makeEndlessTrack() : this.mode === 'demo' ? buildLevel2Demo() : buildLevel2();
     this.cpIndex = 0;
     this.elapsed = 0;
     this.finished = false;
@@ -125,11 +134,17 @@ export class Level2Scene extends Phaser.Scene {
 
     this.makeHud();
     // bread crumbs floating in the tunnel (one picture each, positioned every frame)
-    this.crumbItems = this.track.crumbs.map((c) => ({ ...c, got: false, img: this.add.image(0, 0, 'crumb').setDepth(5).setVisible(false) }));
+    this.crumbItems = [];
+    this.crumbs = null; // forget the counter from a previous run (e.g. after "Run again"), it was destroyed
+    this.addCrumbItems();
     this.crumbs = crumbHud(this, { total: this.crumbItems.length });
     this.spawn();
 
-    this.input.keyboard.on('keydown-R', () => { if (!this.finished) this.spawn(); });
+    // R = back to the checkpoint (in Endless mode: start a new run)
+    this.input.keyboard.on('keydown-R', () => {
+      if (this.endless) this.scene.restart({ mode: 'endless' });
+      else if (!this.finished) this.spawn();
+    });
     addPauseButton(this, false); // P / Esc / the II button
   }
 
@@ -144,16 +159,33 @@ export class Level2Scene extends Phaser.Scene {
     };
     if (this.roll === undefined) this.roll = 0;
     // fresh copy of the level, so crumbled tiles come back
-    this.rows = this.track.rows.map((r) => r.slice());
+    // (Endless mode has one life and a tunnel that keeps growing, so it uses the track's rows directly)
+    this.rows = this.endless ? this.track.rows : this.track.rows.map((r) => r.slice());
     this.crumbling = new Map(); // "row,lane" -> time (seconds) it falls
     this.boost = 0;
     this.bullets = [];
     this.lasers = [];
-    this.bulletTimer = 1.5;
-    this.laserTimer = 2.5;
+    // (Demo mode: the UFO starts shooting almost straight away, so the short boss part still shows a laser)
+    this.bulletTimer = this.mode === 'demo' ? 0.4 : 1.5;
+    this.laserTimer = this.mode === 'demo' ? 0.8 : 2.5;
     this.rocks = [];
     this.rockTimer = 1;
     unerase([this.duck]);
+  }
+
+  // make a picture for every bread crumb in the track we haven't made one for yet
+  addCrumbItems() {
+    for (let i = this.crumbItems.length; i < this.track.crumbs.length; i++) {
+      const c = this.track.crumbs[i];
+      this.crumbItems.push({ ...c, got: false, img: this.add.image(0, 0, 'crumb').setDepth(5).setVisible(false) });
+    }
+    if (this.crumbs) { this.crumbs.total = this.crumbItems.length; this.crumbs.draw(); }
+  }
+
+  // how fast Crumb runs right now (rows per second)
+  baseSpeed() {
+    if (this.endless) return 9 + Math.min(4, this.player.z / 250); // Endless: slowly gets faster
+    return SPEEDS[Math.min(this.cpIndex, SPEEDS.length - 1)];
   }
 
   tileAt(z, u) {
@@ -204,7 +236,12 @@ export class Level2Scene extends Phaser.Scene {
     const wantJump = c.forward > 0.5 || this.space.isDown || gyro.takeJump();
 
     this.boost = Math.max(0, this.boost - dt);
-    const speed = SPEEDS[Math.min(this.cpIndex, SPEEDS.length - 1)] * (this.boost > 0 ? BOOST : 1);
+    const speed = this.baseSpeed() * (this.boost > 0 ? BOOST : 1);
+    // Endless: build more tunnel before we run out
+    if (this.endless && p.z > this.track.rows.length - 140) {
+      this.track.extend(100);
+      this.addCrumbItems();
+    }
     p.z += speed * dt;
     p.u += (c.right - c.left) * SIDE_SPEED * dt;
     const wind = this.windAt(p.z);
@@ -257,17 +294,18 @@ export class Level2Scene extends Phaser.Scene {
     if (p.z > this.track.finishRow) this.finish();
   }
 
-  // Stepping on a cracked tile sets off the cracked tiles around it and just ahead: they fall soon after.
-  // (Only a few rows ahead, so if you keep running they collapse right behind you, not in front of you.)
+  // Stepping on a cracked tile sets off a chain reaction: the cracked tiles in your lane (and the lanes
+  // right next to it) collapse one after another, racing AHEAD of you. They flash red first, so you can
+  // see it coming: switch to a solid side of the tunnel to get past!
   startCrumble(r, l, now) {
-    for (let rr = r; rr < r + 3; rr++) {
+    for (let rr = r; rr < r + CRUMBLE_AHEAD; rr++) {
       const row = this.rows[rr];
       if (!row) break;
       for (let dl = -1; dl <= 1; dl++) {
         const ll = (l + dl + LANES) % LANES;
         const key = `${rr},${ll}`;
         if (row[ll] === CRACKED && !this.crumbling.has(key)) {
-          this.crumbling.set(key, now + CRUMBLE_DELAY + (rr - r) * 0.04);
+          this.crumbling.set(key, now + CRUMBLE_DELAY + (rr - r) * 0.035);
         }
       }
     }
@@ -347,22 +385,69 @@ export class Level2Scene extends Phaser.Scene {
     if (p.dead) return;
     p.dead = true;
     this.cameras.main.shake(200, 0.006);
-    this.showToast(`${message} Try again`);
     audio.sfx.bonk();
     // the erase effect only if you can actually see Crumb (not after he's fallen through the floor)
     if (this.duck.visible) eraseSprites(this, [this.duck], { duration: 600, depth: 20 });
+    if (this.endless) { this.time.delayedCall(800, () => this.gameOver(message)); return; } // one life!
+    this.showToast(`${message} Try again`);
     this.time.delayedCall(950, () => this.spawn());
   }
 
+  // ENDLESS MODE: the run is over. Show how far you got.
+  gameOver(message) {
+    if (this.finished) return;
+    this.finished = true;
+    const { width: W, height: H } = this.scale;
+    const meters = Math.floor(this.player.z);
+    let best = 0;
+    try { best = +(localStorage.getItem('duckdash-endless-best') || 0); } catch (e) { /* ignore */ }
+    const newBest = meters > best;
+    if (newBest) { best = meters; try { localStorage.setItem('duckdash-endless-best', String(best)); } catch (e) { /* ignore */ } }
+    this.hintText.setText(''); this.warnText.setText(''); this.toast.setAlpha(0);
+    audio.sfx[newBest ? 'finish' : 'fall']();
+
+    const panel = this.add.graphics().setDepth(60);
+    panel.fillStyle(0x1a1035, 0.92); panel.fillRoundedRect(W / 2 - 360, H / 2 - 220, 720, 440, 28);
+    panel.lineStyle(4, 0xfff4dc, 0.9); panel.strokeRoundedRect(W / 2 - 360, H / 2 - 220, 720, 440, 28);
+    const style = { fontFamily: FONT, color: '#fff4dc', align: 'center' };
+    this.add.text(W / 2, H / 2 - 165, 'GAME OVER', { ...style, fontSize: '56px', fontStyle: 'bold' }).setOrigin(0.5).setDepth(61);
+    this.add.text(W / 2, H / 2 - 105, message, { ...style, fontSize: '22px', color: '#ffb3b3' }).setOrigin(0.5).setDepth(61);
+    const dist = this.add.text(W / 2, H / 2 - 45, `${meters} m`, {
+      ...style, fontSize: '64px', fontStyle: 'bold', color: '#ffe066', stroke: '#3b1d4a', strokeThickness: 8,
+    }).setOrigin(0.5).setDepth(61).setScale(0.4);
+    this.tweens.add({ targets: dist, scale: 1, duration: 450, ease: 'Back.out' });
+    this.add.text(W / 2, H / 2 + 25,
+      `${newBest ? 'NEW BEST!' : `Best: ${best} m`}   ·   Time: ${fmtTime(this.elapsed / 1000)}   ·   Bread crumbs: ${this.crumbs.got} (bag: ${wallet.crumbs})`,
+      { ...style, fontSize: '20px' }).setOrigin(0.5).setDepth(61);
+    const opts = { w: 280, h: 56, size: 26 };
+    const buttons = [
+      makeButton(this, W / 2, H / 2 + 100, 'Run again', () => this.scene.restart({ mode: 'endless' }), opts),
+      makeButton(this, W / 2, H / 2 + 170, 'Menu', () => this.scene.start('Menu'), opts),
+    ];
+    buttons.forEach((b) => { b.bg.setDepth(61); b.text.setDepth(62); });
+    this.time.delayedCall(700, () => keyboardMenu(this, buttons)); // a moment before keys work
+  }
+
   // ------------------------------------------------------------------ drawing
-  areaColors() {
-    const cps = this.track.checkpoints;
+  // Endless mode has no checkpoints: the colours and scenery change every ENDLESS_SECTION rows instead
+  sectionInfo() {
     const z = this.player.z;
+    if (this.endless) {
+      const s = Math.floor(z / ENDLESS_SECTION);
+      return { section: s % 5, t: (z % ENDLESS_SECTION) / ENDLESS_SECTION, p: (z / ENDLESS_SECTION) % (AREAS.length - 1) };
+    }
+    const cps = this.track.checkpoints;
     let p = 0;
     for (let i = 0; i < cps.length; i++) {
       const start = cps[i], end = i + 1 < cps.length ? cps[i + 1] : this.track.finishRow;
       if (z >= start) p = i + Phaser.Math.Clamp((z - start) / (end - start), 0, 1);
     }
+    const secStart = cps[this.cpIndex], secEnd = cps[this.cpIndex + 1] ?? this.track.finishRow;
+    return { section: Math.min(this.cpIndex, 4), t: Phaser.Math.Clamp((z - secStart) / (secEnd - secStart), 0, 1), p };
+  }
+
+  areaColors() {
+    let p = this.sectionInfo().p;
     p = Phaser.Math.Clamp(p, 0, AREAS.length - 1);
     const i = Math.min(Math.floor(p), AREAS.length - 2);
     // stay on one area's colours for most of it, then blend at the end
@@ -391,7 +476,7 @@ export class Level2Scene extends Phaser.Scene {
       n.setScale(n.polar.scale).setTint(col.nebula).setAlpha(0.22); // dim, so it never looks like a tile
     });
     // stars drift outwards like you're flying past them
-    const speed = this.finished ? 2 : SPEEDS[Math.min(this.cpIndex, SPEEDS.length - 1)] * (this.boost > 0 ? BOOST : 1);
+    const speed = this.finished ? 2 : this.baseSpeed() * (this.boost > 0 ? BOOST : 1);
     this.starGfx.clear();
     for (const s of this.stars) {
       s.r += s.r * dt * 0.02 * speed;
@@ -402,12 +487,10 @@ export class Level2Scene extends Phaser.Scene {
     }
 
     // --- background decorations (behind the tunnel) ---
-    const cps = this.track.checkpoints;
-    const secStart = cps[this.cpIndex], secEnd = cps[this.cpIndex + 1] ?? this.track.finishRow;
+    const sec = this.sectionInfo();
     const nearWind = this.track.winds.find((w) => p.z > w.start - 30 && p.z < w.end);
     this.scenery.update(time, dt, {
-      section: Math.min(this.cpIndex, 4),
-      sectionT: Phaser.Math.Clamp((p.z - secStart) / (secEnd - secStart), 0, 1),
+      section: sec.section, sectionT: sec.t,
       roll: this.roll, windDir: nearWind ? nearWind.dir : 0, speed,
     });
 
@@ -647,7 +730,7 @@ export class Level2Scene extends Phaser.Scene {
       const scale = (0.95 * FOCAL) / dzP / 80; // Crumb is about 0.95 lanes tall; picture is 80px
       let frame = 'duckJump';
       if (p.grounded) {
-        this.runAnim += dt * SPEEDS[Math.min(this.cpIndex, SPEEDS.length - 1)] * 0.9;
+        this.runAnim += dt * this.baseSpeed() * 0.9;
         frame = Math.floor(this.runAnim) % 2 ? 'duckRunA' : 'duckRunB';
       }
       const sideRoll = this.roll - this.targetRoll; // tilt with the tunnel while it is turning
@@ -669,7 +752,7 @@ export class Level2Scene extends Phaser.Scene {
     const style = { fontFamily: FONT, fontSize: '22px', color: '#fff4dc', stroke: '#1a1035', strokeThickness: 5 };
     this.cpText = this.add.text(20, 16, '', style).setDepth(50);
     this.timeText = this.add.text(20, 46, '', style).setDepth(50);
-    this.add.text(W - 20, 16, 'R = back to checkpoint   P / Esc = pause', { ...style, fontSize: '18px' }).setOrigin(1, 0).setDepth(50);
+    this.add.text(W - 20, 16, `${this.endless ? 'R = restart' : 'R = back to checkpoint'}   P / Esc = pause`, { ...style, fontSize: '18px' }).setOrigin(1, 0).setDepth(50);
     this.progress = this.add.graphics().setDepth(50);
     this.hintText = this.add.text(W / 2, H - 70, '', {
       ...style, fontSize: '30px', fontStyle: 'bold', align: 'center', wordWrap: { width: 1000 },
@@ -691,10 +774,18 @@ export class Level2Scene extends Phaser.Scene {
   updateHud(now) {
     const { width: W } = this.scale;
     const p = this.player;
-    this.cpText.setText(`Checkpoint ${this.cpIndex} / ${this.track.checkpoints.length - 1}`);
     this.timeText.setText(`Time ${fmtTime(this.elapsed / 1000)}`);
+    if (this.endless) {
+      // Endless: show how far you've run (1 row = 1 meter) instead of checkpoints and a progress bar
+      if (this.bestDist === undefined) {
+        try { this.bestDist = +(localStorage.getItem('duckdash-endless-best') || 0); } catch (e) { this.bestDist = 0; }
+      }
+      this.cpText.setText(`Distance ${Math.floor(p.z)} m   (best ${this.bestDist} m)`);
+      this.progress.clear();
+    } else this.cpText.setText(`Checkpoint ${this.cpIndex} / ${this.track.checkpoints.length - 1}`);
 
     const end = this.track.finishRow;
+    if (!this.endless) {
     const t = Phaser.Math.Clamp(p.z / end, 0, 1);
     const bx = W / 2 - 200, by = 30, bw = 400;
     this.progress.clear();
@@ -705,6 +796,7 @@ export class Level2Scene extends Phaser.Scene {
       this.progress.fillCircle(bx + (bw * cp) / end, by, 5);
     });
     this.progress.fillStyle(0xb6ff3b); this.progress.fillCircle(bx + bw, by, 8);
+    }
 
     // tutorial hint: show the one we're coming up to
     const h = this.track.hints.find((x) => p.z > x.row - 25 && p.z < x.row + 8);
@@ -730,11 +822,13 @@ export class Level2Scene extends Phaser.Scene {
     this.warnText.setText('');
     this.bullets.length = 0; this.lasers.length = 0;
     this.tweens.add({ targets: [this.ufo, this.bread], scale: 1.1, y: this.cy - 110, duration: 1500, ease: 'Cubic.out' });
+    const demo = this.mode === 'demo';
     levelCompletePanel(this, {
-      title: 'Level 2 complete!', secs: this.elapsed / 1000, limits: STAR_LIMITS, levelKey: 'level2',
+      title: demo ? 'Demo complete!' : 'Level 2 complete!', secs: this.elapsed / 1000,
+      limits: demo ? [40, 60] : STAR_LIMITS, levelKey: demo ? 'demo2' : 'level2',
       line: 'Crumb caught the UFO... but who is flying it?',
       crumbs: { got: this.crumbs.got, total: this.crumbs.total },
-      onDone: () => this.scene.start('Cutscene', { id: 'ending', next: 'Menu' }),
+      onDone: () => this.scene.start('Cutscene', { id: 'ending', next: 'Menu', fast: demo }),
     });
   }
 }

@@ -2,15 +2,15 @@ import { makeTextures } from '../art.js';
 import { createControls } from '../controls.js';
 import { settings } from '../settings.js';
 import { gyro } from '../gyro.js';
-import { buildLevel1, groundYAt } from '../level1Track.js';
+import { buildLevel1, buildLevel1Demo, groundYAt } from '../level1Track.js';
 import { FONT, eraseSprites, unerase, levelCompletePanel, crumbHud } from '../ui.js';
 import { audio } from '../audio.js';
 import { addPauseButton } from './PauseScene.js';
 import { level1Scenery } from '../scenery.js';
 
 // ---- Bike tuning (change these to make the bike feel different) ----
-const MAX_WHEEL_SPIN = 1.3;   // top speed
-const WHEEL_ACCEL = 0.06;     // how fast it speeds up
+const MAX_WHEEL_SPIN = 1.1;   // top speed (was 1.3)
+const WHEEL_ACCEL = 0.05;     // how fast it speeds up (was 0.06)
 const HILL_PUSH = 0.0005;     // extra push along the ground while riding (stops it bogging down on hills)
 const DOWNFORCE = 0.0011;
 const FALL_DEPTH = 220;       // how far below a gap's edge you fall before "Splat!" (bigger = falls deeper)     // presses the bike onto the ground while riding, so it doesn't hop over bumps
@@ -40,10 +40,13 @@ const lerpColor = (a, b, t) => {
 export class Level1Scene extends Phaser.Scene {
   constructor() { super('Level1'); }
 
+  // mode: 'story' (normal) or 'demo' (short showcase course)
+  init(data) { this.mode = (data && data.mode) || 'story'; }
+
   create() {
     makeTextures(this);
     this.controls = createControls(this);
-    this.track = buildLevel1();
+    this.track = this.mode === 'demo' ? buildLevel1Demo() : buildLevel1();
     this.cpIndex = 0;
     this.crashed = false;
     this.finished = false;
@@ -527,11 +530,16 @@ export class Level1Scene extends Phaser.Scene {
     // the UFO blasts off toward space
     this.tweens.add({ targets: [this.ufo, this.bread], y: '-=400', x: '+=200', duration: 1600, ease: 'Cubic.in' });
     // show the stars, then go straight into the next cutscene
+    const demo = this.mode === 'demo';
     levelCompletePanel(this, {
-      title: 'Level 1 complete!', secs: this.elapsed / 1000, limits: STAR_LIMITS, levelKey: 'level1',
-      line: 'The UFO is heading for space... Crumb won\'t give up!', fixed: true,
+      title: demo ? 'Demo: bike done!' : 'Level 1 complete!', secs: this.elapsed / 1000,
+      limits: demo ? [25, 40] : STAR_LIMITS, levelKey: demo ? 'demo1' : 'level1',
+      line: demo ? 'Next up: the space tunnel!' : 'The UFO is heading for space... Crumb won\'t give up!', fixed: true,
       crumbs: { got: this.crumbs.got, total: this.crumbs.total },
-      onDone: () => this.scene.start('Cutscene', { id: 'middle', next: 'Level2' }),
+      // story: the middle cutscene, then Level 2.  demo: straight to the short space tunnel
+      onDone: () => (demo
+        ? this.scene.start('Cutscene', { id: 'middle', next: 'Level2', nextData: { mode: 'demo' }, fast: true })
+        : this.scene.start('Cutscene', { id: 'middle', next: 'Level2' })),
     });
   }
 }

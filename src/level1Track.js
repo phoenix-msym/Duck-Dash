@@ -152,11 +152,44 @@ export function buildLevel1() {
     .slope(800, 380)
     .boost(10)
     .flat(120)
-    .ramp(400, -260).airCrumbs(620, 280, 6).gap(560, 360)
+    .ramp(400, -170).airCrumbs(500, 220, 6).gap(440, 360) // lower ramp + shorter gap to suit the slower bike
     .slope(1500, 440).flat(300)
     .sign('The UFO is getting away!', 0)
     .crumbs(800, 3)
     .flat(800);
+
+  return t.finish();
+}
+
+// DEMO MODE: a short course that shows off everything (boost pads, crumbs, big air, the sky going
+// from sunset to night) with checkpoints close together.
+export function buildLevel1Demo() {
+  // (about half the length of before: aims for under 20 seconds, but still has crumbs, boost pads,
+  //  a kicker jump, a big hill, 4 checkpoints for the sunset-to-night sky, and the mega jump)
+  const t = makeTrackBuilder(-600, 560);
+  t.flat(600).checkpoint()
+    .sign('DEMO! Hold W to ride, A / D to spin', 160)
+    .crumbs(300, 3)
+    .flat(300)
+    .boost(40)
+    .flat(150)
+    .ramp(240, -100).airCrumbs(280, 100, 3).gap(240, 150)
+    .slope(700, 200).flat(150);
+
+  t.checkpoint().flat(100)
+    .hills(1, 200, 700)
+    .flat(100);
+
+  t.checkpoint().flat(100)
+    .ramp(260, -110).airCrumbs(300, 120, 3).gap(280, 100)
+    .slope(700, 180).flat(150);
+
+  t.checkpoint().flat(100)
+    .slope(500, 250).boost(10).flat(100)
+    .ramp(380, -150).airCrumbs(420, 190, 5).gap(340, 320)
+    .slope(1000, 360).flat(150)
+    .sign('The UFO is getting away!', 0)
+    .flat(500);
 
   return t.finish();
 }

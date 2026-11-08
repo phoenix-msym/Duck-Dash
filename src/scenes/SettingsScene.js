@@ -1,5 +1,5 @@
 import { makeTextures } from '../art.js';
-import { makeButton, sunsetBackdrop, FONT } from '../ui.js';
+import { makeButton, sunsetBackdrop, fullscreenButton, FONT } from '../ui.js';
 import { settings, saveSettings } from '../settings.js';
 import { gyro } from '../gyro.js';
 import { audio } from '../audio.js';
@@ -27,9 +27,10 @@ export class SettingsScene extends Phaser.Scene {
     this.add.text(W / 2, 185, 'Controls', { fontFamily: FONT, fontSize: '28px', color: '#ffd23f' }).setOrigin(0.5);
     this.controlButtons = this.row(250, CONTROL_OPTIONS, 'controlMode');
 
-    this.add.text(W / 2, 330, 'Sound', { fontFamily: FONT, fontSize: '28px', color: '#ffd23f' }).setOrigin(0.5);
-    this.musicButton = makeButton(this, W / 2 - 145, 395, '', () => { audio.setMusicOn(settings.musicOn === false); this.refresh(); }, { w: 260, h: 56, size: 24 });
-    this.sfxButton = makeButton(this, W / 2 + 145, 395, '', () => { audio.setSfxOn(settings.sfxOn === false); this.refresh(); }, { w: 260, h: 56, size: 24 });
+    this.add.text(W / 2, 330, 'Sound & Screen', { fontFamily: FONT, fontSize: '28px', color: '#ffd23f' }).setOrigin(0.5);
+    this.musicButton = makeButton(this, W / 2 - 290, 395, '', () => { audio.setMusicOn(settings.musicOn === false); this.refresh(); }, { w: 260, h: 56, size: 24 });
+    this.sfxButton = makeButton(this, W / 2, 395, '', () => { audio.setSfxOn(settings.sfxOn === false); this.refresh(); }, { w: 260, h: 56, size: 24 });
+    fullscreenButton(this, W / 2 + 290, 395, { w: 260, h: 56, size: 24 });
     audio.music('menu');
 
     this.note = this.add.text(W / 2, 478, '', {
