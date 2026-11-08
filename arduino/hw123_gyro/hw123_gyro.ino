@@ -1,37 +1,19 @@
-// Wrist controller for the Tunnel Runner and Moto games.
-// Works with an MPU-6050 (GY-521, HW-123) or an MPU-9250 (same accelerometer and gyro registers).
-//
-// Wiring (Arduino Mega):
-//   VCC -> 5V for GY-521 / HW-123 (3.3V for a bare MPU-9250), GND -> GND
-//   SDA -> pin 20, SCL -> pin 21, AD0 -> GND (address 0x68)
-//
-// Mounting: board flat on the back of your hand, component side up,
-// the X arrow pointing toward your fingers.
-//
-// Output, about 50 lines per second at 115200 baud:   roll,pitch,flick
-//   roll  > 0 : right side of the hand tilts down
-//   pitch > 0 : fingers point down
-//   flick = 1 : a double wrist flick was detected (sent once)  -> jump
-//   flick = 3 : a triple wrist flick was detected (sent once)  -> double jump
-//   (a single flick sends nothing)
-
-
 #include <Wire.h>
 
 
-uint8_t ADDR = 0x68;                       // found automatically (0x68 or 0x69)
-const float ALPHA = 0.96;                  // gyro vs accelerometer blend
-const float FLICK_DPS = 350.0;             // rotation speed that counts as a flick
-const unsigned long DOUBLE_WINDOW = 700;   // max time between the two flicks (ms)
-const unsigned long REFRACT = 120;         // minimum time between flicks (ms)
-const unsigned long HOLD_MS = 150;         // freeze tilt output after a flick (ms)  [CHANGED: was 450]
+uint8_t ADDR = 0x68;                       
+const float ALPHA = 0.96;                  
+const float FLICK_DPS = 350.0;             
+const unsigned long DOUBLE_WINDOW = 700;   
+const unsigned long REFRACT = 120;
+const unsigned long HOLD_MS = 150;
 
 
 float gxo = 0, gyo = 0, gzo = 0;
 float roll = 0, pitch = 0, outRoll = 0, outPitch = 0;
 unsigned long lastMicros = 0, lastSend = 0, lastFlick = 0, holdUntil = 0;
 bool armed = true;
-int flickCount = 0;                        // flicks in the current burst  [CHANGED: replaces "waiting"]
+int flickCount = 0;
 
 
 void writeReg(uint8_t reg, uint8_t val) {
@@ -70,14 +52,14 @@ bool readIMU(float &ax, float &ay, float &az, float &gx, float &gy, float &gz) {
 
 void setup() {
   Serial.begin(115200);
-  Serial.println("BOOT");            // [ADDED] proves the board is running, printed before touching the sensor
+  Serial.println("BOOT");
   Wire.begin();
-  Wire.setWireTimeout(3000, true);   // [ADDED] if the sensor wires are wrong, give up instead of freezing forever
-  Wire.setClock(100000);   // slow and safe for jumper wires
+  Wire.setWireTimeout(3000, true);
+  Wire.setClock(100000);
   delay(10);
 
 
-  // Find the sensor at 0x68 or 0x69.
+
   uint8_t found = 0;
   const uint8_t tryAddr[2] = {0x68, 0x69};
   for (int i = 0; i < 2 && !found; i++) {
@@ -89,16 +71,15 @@ void setup() {
   Serial.print("SENSOR 0x"); Serial.println(ADDR, HEX);
 
 
-  writeReg(0x6B, 0x00);   // wake up
+  writeReg(0x6B, 0x00);
   delay(100);
   Serial.print("WHO_AM_I 0x"); Serial.println(readReg(0x75), HEX);
-  writeReg(0x1A, 0x03);   // low-pass filter, about 44 Hz
-  writeReg(0x1B, 0x10);   // gyro range +-1000 deg/s
-  writeReg(0x1C, 0x00);   // accelerometer range +-2 g
+  writeReg(0x1A, 0x03);
+  writeReg(0x1B, 0x10);
+  writeReg(0x1C, 0x00);
   delay(100);
 
 
-  // Measure the gyro offsets while the hand rests still.
   float sx = 0, sy = 0, sz = 0;
   int n = 0, tries = 0;
   float ax, ay, az, gx, gy, gz;
@@ -120,7 +101,7 @@ void setup() {
 
 void loop() {
   unsigned long nowUs = micros();
-  if (nowUs - lastMicros < 10000) return;            // about 100 Hz sensor loop
+  if (nowUs - lastMicros < 10000) return;
   float dt = (nowUs - lastMicros) / 1000000.0;
   lastMicros = nowUs;
 
@@ -142,9 +123,8 @@ void loop() {
 
 
   if (rate > FLICK_DPS) {
-    holdUntil = now + HOLD_MS;                       // ignore tilt during the flick
+    holdUntil = now + HOLD_MS;
     if (armed && now - lastFlick > REFRACT) {
-      // [CHANGED] count the flicks in a burst: 2nd flick = jump, 3rd flick = double jump
       if (now - lastFlick > DOUBLE_WINDOW) flickCount = 0;
       flickCount++;
       if (flickCount == 2) flick = 1;
@@ -155,7 +135,7 @@ void loop() {
   } else if (rate < FLICK_DPS * 0.4) {
     armed = true;
   }
-  if (flickCount > 0 && now - lastFlick > DOUBLE_WINDOW) flickCount = 0;   // [CHANGED] burst timed out
+  if (flickCount > 0 && now - lastFlick > DOUBLE_WINDOW) flickCount = 0;
 
 
   if (now > holdUntil) { outRoll = roll; outPitch = pitch; }
