@@ -441,9 +441,10 @@ export function level2Scenery(scene) {
           .setScale(0.4 + j.r / 500).setRotation(j.img.rotation + j.spin * dt).setAlpha(Math.min(1, j.r / 200));
       }
 
-      // asteroid belt ring (asteroid section)
+      // (the asteroid belt was removed along with the asteroids; set SHOW_BELT = true to bring it back)
       belt.clear();
-      if (shown[2] > 0.02) {
+      const SHOW_BELT = false;
+      if (SHOW_BELT && shown[2] > 0.02) {
         for (const b of beltRocks) {
           const a = b.a + time / 9000 + roll;
           belt.fillStyle(mixColor(0x5a4c40, 0xa8988a, b.shade), shown[2]);

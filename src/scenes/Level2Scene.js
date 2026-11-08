@@ -9,7 +9,7 @@ import { addPauseButton } from './PauseScene.js';
 import { level2Scenery } from '../scenery.js';
 
 // ---- Runner tuning ----
-const SPEEDS = [10, 11, 11.5, 12, 12.5]; // rows per second in each section (basics, holes, asteroids, wind, boss)
+const SPEEDS = [9, 9.8, 10.4, 10.8, 11.2]; // rows per second in each section (basics, holes, wall run, wind, boss)
 const SIDE_SPEED = 8.5;   // lanes per second when holding A / D
 const JUMP_POWER = 10.2;
 const GRAVITY = 34.6;
@@ -18,16 +18,16 @@ const COYOTE_TIME = 0.12; // seconds you can still jump after running off an edg
 const BOOST = 1.6;        // lily pad speed multiplier
 const BOOST_TIME = 1.2;   // seconds a lily pad boost lasts
 const CRUMBLE_DELAY = 0.35;// seconds before a touched cracked tile falls
-const WIND = 3.2;         // lanes per second the wind pushes you
+const WIND = 2.4;         // lanes per second the wind pushes you
 const STAR_LIMITS = [75, 100]; // seconds: under the first = 3 stars, under the second = 2 stars
 const ROCK_EVERY = 0.55;  // seconds between asteroids in the asteroid section
 const ROCK_SPEED = 6;     // rows per second the asteroids tumble towards you
 
 // ---- Boss fight tuning ----
-const BULLET_EVERY = 0.8;  // seconds between bullets
-const BULLET_SPEED = 9;    // rows per second the bullets fly towards you
-const LASER_EVERY = 2.6;   // seconds between lasers
-const LASER_WARN = 1.0;    // seconds of red warning before the laser fires
+const BULLET_EVERY = 1.2;  // seconds between bullets
+const BULLET_SPEED = 7;    // rows per second the bullets fly towards you
+const LASER_EVERY = 3.4;   // seconds between lasers
+const LASER_WARN = 1.2;    // seconds of red warning before the laser fires
 const LASER_FIRE = 0.4;    // seconds the laser stays on
 
 // ---- How the 3D tunnel is drawn ----
@@ -40,14 +40,15 @@ const CAM_UP = 1.5;       // camera height above the floor
 const NEAR = 0.35;
 const INSET = 0.06;       // small gap between tiles so you can see the grid
 
-// Colours for each area of the level (between checkpoints)
+// Colours for each area of the level (between checkpoints).
+// The sky is always DARK and the tiles always BRIGHT, so you can always tell what's floor and what's a hole.
 const AREAS = [
-  { bgTop: 0x050818, bgBottom: 0x141a48, tileA: 0x4d6bff, tileB: 0x3b52d1, nebula: 0x5d7dff },
-  { bgTop: 0x0d0420, bgBottom: 0x341150, tileA: 0xb35cff, tileB: 0x8c3fd6, nebula: 0xd36bff },
-  { bgTop: 0x140c04, bgBottom: 0x3a2412, tileA: 0xf0a04b, tileB: 0xc97f30, nebula: 0xffb066 }, // asteroids
-  { bgTop: 0x021317, bgBottom: 0x07363d, tileA: 0x2fd6c0, tileB: 0x21a898, nebula: 0x3dffd9 }, // wind
-  { bgTop: 0x170309, bgBottom: 0x40101f, tileA: 0xff6b6b, tileB: 0xd94f5c, nebula: 0xff7a59 }, // boss
-  { bgTop: 0x03140a, bgBottom: 0x0c3a1d, tileA: 0xb6ff3b, tileB: 0x8fd62a, nebula: 0xb6ff3b },
+  { bgTop: 0x03040d, bgBottom: 0x0b0f2a, tileA: 0x6f88ff, tileB: 0x5068e8, nebula: 0x5d7dff },
+  { bgTop: 0x070210, bgBottom: 0x1c0a2c, tileA: 0xc47dff, tileB: 0xa55ef0, nebula: 0xd36bff },
+  { bgTop: 0x0a0604, bgBottom: 0x1e140a, tileA: 0xffb766, tileB: 0xf09a45, nebula: 0xffb066 }, // wall run
+  { bgTop: 0x010a0c, bgBottom: 0x041c20, tileA: 0x5df0dc, tileB: 0x3cd0bd, nebula: 0x3dffd9 }, // wind
+  { bgTop: 0x080104, bgBottom: 0x16040a, tileA: 0xffa08f, tileB: 0xff7b74, nebula: 0xff5a49 }, // boss
+  { bgTop: 0x010703, bgBottom: 0x051409, tileA: 0xc8ff6a, tileB: 0xa6e84a, nebula: 0xb6ff3b },
 ];
 // how big the UFO looks in each section: small and far at the start, closer every checkpoint
 const UFO_SCALE = [0.12, 0.17, 0.22, 0.28, 0.45];
@@ -388,7 +389,7 @@ export class Level2Scene extends Phaser.Scene {
     this.nebulas.forEach((n) => {
       const a = n.polar.a + this.roll;
       n.setPosition(this.cx + Math.cos(a) * n.polar.r, this.cy + Math.sin(a) * n.polar.r);
-      n.setScale(n.polar.scale).setTint(col.nebula).setAlpha(0.5);
+      n.setScale(n.polar.scale).setTint(col.nebula).setAlpha(0.22); // dim, so it never looks like a tile
     });
     // stars drift outwards like you're flying past them
     const speed = this.finished ? 2 : SPEEDS[Math.min(this.cpIndex, SPEEDS.length - 1)] * (this.boost > 0 ? BOOST : 1);
@@ -441,27 +442,28 @@ export class Level2Scene extends Phaser.Scene {
     const last = Math.min(rows.length - 1, first + VIEW_ROWS);
     const cpSet = new Set(this.track.checkpoints);
     const flash = Math.floor(time / 70) % 2 === 0;
-    for (let r = last; r >= first; r--) {
-      const row = rows[r];
-      let z0 = r + INSET, z1 = r + 1 - INSET;
-      if (z1 - camZ < NEAR) continue;
+    // far-away tiles fade towards a DARK colour (not the sky colour), so tiles never blend into the background
+    const fogCol = mix(col.bgTop, 0x000000, 0.35);
+    const special = (r) => cpSet.has(r) || cpSet.has(r - 1) || (r >= this.track.finishRow && r < this.track.finishRow + 2);
+
+    // draws one tile from row zStart to row zEnd (1 or 2 rows long) in lane l
+    const drawTile = (zStart, zEnd, l, type) => {
+      const r = zStart;
+      let z0 = zStart + INSET, z1 = zEnd - INSET;
+      if (z1 - camZ < NEAR) return;
       if (z0 - camZ < NEAR) z0 = camZ + NEAR;
       const fog = Phaser.Math.Clamp((z0 - camZ - 6) / (VIEW_ROWS - 6), 0, 1);
-      const isCp = cpSet.has(r) || cpSet.has(r - 1);
-      for (let l = 0; l < LANES; l++) {
-        const type = row[l];
-        if (type === HOLE) continue;
-        const [a, b] = edges[l];
-        let base = (r + l) % 2 ? col.tileA : col.tileB;
-        if (type === PAD) base = 0x1f4f86; // pond water under the lily pad
-        if (type === CRACKED) base = mix(base, 0x2a1a10, 0.45);
-        if (type === CRACKED && this.crumbling.has(`${r},${l}`)) base = flash ? 0xff3b3b : 0xffffff; // about to fall!
-        if (isCp) base = 0x3ddc84;
-        if (r >= this.track.finishRow && r < this.track.finishRow + 2) base = (l % 2) ? 0xffffff : 0x222222;
-        const p1 = proj(a.x, a.y, z0), p2 = proj(b.x, b.y, z0), p3 = proj(b.x, b.y, z1), p4 = proj(a.x, a.y, z1);
-        g.fillStyle(mix(base, col.bgBottom, fog * fog), 1);
-        g.fillPoints([p1, p2, p3, p4], true);
-        if (type === PAD) {
+      const [a, b] = edges[l];
+      let base = (Math.floor(r / 2) + l) % 2 ? col.tileA : col.tileB;
+      if (type === PAD) base = 0x1f4f86; // pond water under the lily pad
+      if (type === CRACKED) base = mix(base, 0x2a1a10, 0.45);
+      if (type === CRACKED && this.crumbling.has(`${r},${l}`)) base = flash ? 0xff3b3b : 0xffffff; // about to fall!
+      if (cpSet.has(r) || cpSet.has(r - 1)) base = 0x3ddc84;
+      if (r >= this.track.finishRow && r < this.track.finishRow + 2) base = (l % 2) ? 0xffffff : 0x222222;
+      const p1 = proj(a.x, a.y, z0), p2 = proj(b.x, b.y, z0), p3 = proj(b.x, b.y, z1), p4 = proj(a.x, a.y, z1);
+      g.fillStyle(mix(base, fogCol, fog * fog), 1);
+      g.fillPoints([p1, p2, p3, p4], true);
+      if (type === PAD) {
           // A round lily pad lying on the tile, with a notch cut out and a little pink flower.
           // at(s, t) finds a point on the tile: s goes across (0..1), t goes along the tunnel (0..1)
           const at = (s, t) => ({
@@ -470,28 +472,24 @@ export class Level2Scene extends Phaser.Scene {
           });
           const f2 = fog * fog;
           const pad = [at(0.5, 0.5)]; // start at the centre so the notch is a wedge
-          for (let k = 0; k <= 14; k++) {
-            const a = 0.5 + (k / 14) * (Math.PI * 2 - 1); // leave a gap (the notch) near angle 0
+          for (let k = 0; k <= 10; k++) {
+            const a = 0.5 + (k / 10) * (Math.PI * 2 - 1); // leave a gap (the notch) near angle 0
             pad.push(at(0.5 + Math.cos(a) * 0.44, 0.5 + Math.sin(a) * 0.44));
           }
-          g.fillStyle(mix(0x2f9a4a, col.bgBottom, f2), 1); g.fillPoints(pad, true);
-          // lighter inner ring + veins
+          g.fillStyle(mix(0x2f9a4a, fogCol, f2), 1); g.fillPoints(pad, true);
+          // lighter inner ring
           const inner = [at(0.5, 0.5)];
-          for (let k = 0; k <= 10; k++) {
-            const a = 0.5 + (k / 10) * (Math.PI * 2 - 1);
+          for (let k = 0; k <= 7; k++) {
+            const a = 0.5 + (k / 7) * (Math.PI * 2 - 1);
             inner.push(at(0.5 + Math.cos(a) * 0.3, 0.5 + Math.sin(a) * 0.3));
           }
-          g.fillStyle(mix(0x4cc26a, col.bgBottom, f2), 1); g.fillPoints(inner, true);
-          // the pink flower: petals around a yellow middle
-          if (fog < 0.85) {
+          g.fillStyle(mix(0x4cc26a, fogCol, f2), 1); g.fillPoints(inner, true);
+          // the pink flower (only on nearby pads: far away it'd be too small to see anyway)
+          if (fog < 0.5) {
             const fc = at(0.36, 0.36);
             const sz = Math.max(1.5, Math.abs(p2.x - p1.x) * 0.09);
-            g.fillStyle(mix(0xff7ac8, col.bgBottom, f2), 1);
-            for (let k = 0; k < 5; k++) {
-              const a = (k / 5) * Math.PI * 2;
-              g.fillCircle(fc.x + Math.cos(a) * sz, fc.y + Math.sin(a) * sz * 0.6, sz * 0.85);
-            }
-            g.fillStyle(mix(0xffe14d, col.bgBottom, f2), 1); g.fillCircle(fc.x, fc.y, sz * 0.6);
+            g.fillStyle(mix(0xff7ac8, fogCol, f2), 1); g.fillCircle(fc.x, fc.y, sz * 1.5);
+            g.fillStyle(mix(0xffe14d, fogCol, f2), 1); g.fillCircle(fc.x, fc.y, sz * 0.6);
           }
         }
         // boss section: red warning lights flashing along the tunnel's corners
@@ -508,6 +506,20 @@ export class Level2Scene extends Phaser.Scene {
           g.lineBetween((p1.x + p3.x) / 2 + 3, (p1.y + p3.y) / 2, p3.x, p3.y);
           g.lineBetween(p2.x, p2.y, (p1.x + p3.x) / 2 + 3, (p1.y + p3.y) / 2);
         }
+    };
+
+    // Rows are drawn in pairs. If both rows of a pair have the same plain tile in a lane, draw ONE long tile:
+    // half as many tiles on screen (less busy, and faster). Far pairs first, near pairs last.
+    for (let base = last - (last % 2); base >= first - (first % 2); base -= 2) {
+      const rowA = rows[base], rowB = rows[base + 1];
+      if (!rowA) continue;
+      for (let l = 0; l < LANES; l++) {
+        const tA = rowA[l], tB = rowB ? rowB[l] : HOLE;
+        const merge = rowB && tA === tB && tA !== HOLE && tA !== PAD && !special(base) && !special(base + 1)
+          && !this.crumbling.has(`${base},${l}`) && !this.crumbling.has(`${base + 1},${l}`);
+        if (merge) { drawTile(base, base + 2, l, tA); continue; }
+        if (rowB && tB !== HOLE) drawTile(base + 1, base + 2, l, tB); // the further one first
+        if (tA !== HOLE) drawTile(base, base + 1, l, tA);
       }
     }
 

@@ -11,9 +11,10 @@ import { level1Scenery } from '../scenery.js';
 // ---- Bike tuning (change these to make the bike feel different) ----
 const MAX_WHEEL_SPIN = 1.3;   // top speed
 const WHEEL_ACCEL = 0.06;     // how fast it speeds up
-const HILL_PUSH = 0.0006;     // extra push along the bike while a wheel is on the ground (stops it bogging down on hills)
+const HILL_PUSH = 0.0005;     // extra push along the ground while riding (stops it bogging down on hills)
+const DOWNFORCE = 0.0011;     // presses the bike onto the ground while riding, so it doesn't hop over bumps
 const AIR_DRAG = 0.0015;      // low air drag = Crumb keeps his momentum (the default is 0.01)
-const STAR_LIMITS = [32, 48]; // seconds: under the first = 3 stars, under the second = 2 stars
+const STAR_LIMITS = [48, 70]; // seconds: under the first = 3 stars, under the second = 2 stars (course is longer now)
 const BRAKE_SPIN = -0.25;     // S makes it slow down / roll back a bit
 const LEAN_AIR = 0.04;        // how hard A/D spin you in the air (big = easy flips)
 const LEAN_GROUND = 0.006;    // ...and on the ground (weaker)
@@ -175,7 +176,9 @@ export class Level1Scene extends Phaser.Scene {
         if (len < 1) continue;
         const nx = -dy / len, ny = dx / len; // points into the ground
         const cx = (a.x + c.x) / 2 + nx * THICK / 2, cy = (a.y + c.y) / 2 + ny * THICK / 2;
-        this.matter.add.rectangle(cx, cy, len + 4, THICK, {
+        // exactly the segment's length: making them longer left tiny "steps" where the ground bends up,
+        // which bounced the bike into the air when powering uphill
+        this.matter.add.rectangle(cx, cy, len, THICK, {
           isStatic: true, angle: Math.atan2(dy, dx), label: 'ground', friction: 1, restitution: 0,
         });
       }
@@ -292,7 +295,7 @@ export class Level1Scene extends Phaser.Scene {
     const axle = (wheel) => Constraint.create({
       bodyA: chassis,
       pointA: { x: wheel.position.x - chassis.position.x, y: wheel.position.y - chassis.position.y },
-      bodyB: wheel, length: 0, stiffness: 0.35, damping: 0.15,
+      bodyB: wheel, length: 0, stiffness: 0.3, damping: 0.3, // softer, less bouncy suspension
     });
     const all = [chassis, back, front, axle(back), axle(front)];
     this.matter.world.add(all);
@@ -423,11 +426,18 @@ export class Level1Scene extends Phaser.Scene {
         const av = Phaser.Math.Clamp(chassis.angularVelocity + lean * power, -MAX_LEAN_SPEED, MAX_LEAN_SPEED);
         Body.setAngularVelocity(chassis, av);
       }
-      // a push along the direction the bike points, so it powers up hills instead of bogging down
-      if (c.forward > 0 && this.wheelsTouching.size > 0) {
+      // a push along the ground, so it powers up hills instead of bogging down (only with BOTH wheels down,
+      // otherwise the push would lift the front and make the bike hop)
+      if (c.forward > 0 && this.wheelsTouching.size === 2) {
         const f = HILL_PUSH * chassis.mass * c.forward;
         Body.applyForce(chassis, chassis.position, { x: Math.cos(chassis.angle) * f, y: Math.sin(chassis.angle) * f });
       }
+    }
+    // "downforce": while riding on the ground, press the bike gently onto it so bumps and hill bottoms
+    // don't bounce it into the air
+    if (!this.crashed && this.wheelsTouching.size > 0) {
+      const d = DOWNFORCE * chassis.mass;
+      Body.applyForce(chassis, chassis.position, { x: -Math.sin(chassis.angle) * d, y: Math.cos(chassis.angle) * d });
     }
 
     // engine hum follows wheel speed; a thud when you land after a jump

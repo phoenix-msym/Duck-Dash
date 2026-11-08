@@ -3,7 +3,7 @@
 //
 // To change the level, edit the list in buildLevel1() at the bottom.
 
-const STEP = 40; // how far apart the ground points are on curvy bits
+const STEP = 20; // how far apart the ground points are on curvy bits (smaller = smoother hills, fewer bumps)
 
 export function makeTrackBuilder(startX, startY) {
   const pieces = [];          // separate chunks of ground (gaps go between them)
@@ -43,8 +43,13 @@ export function makeTrackBuilder(startX, startY) {
       return b;
     },
 
-    // a straight kicker ramp that ends sharply (use before a gap)
-    ramp(len, rise) { push(x + len * 0.5, y + rise * 0.3); push(x + len * 0.5, y + rise * 0.7); return b; },
+    // a smoothly curved kicker ramp (gentle at the bottom, steep at the lip) - use before a gap
+    ramp(len, rise) {
+      const x0 = x, y0 = y;
+      for (let d = STEP; d <= len; d += STEP) push(x0 + d, y0 + rise * Math.pow(d / len, 1.8));
+      if (x !== x0 + len) push(x0 + len, y0 + rise);
+      return b;
+    },
 
     // empty space you have to jump. "drop" > 0 means the landing is lower
     gap(width, drop = 0) {
@@ -116,7 +121,7 @@ export function buildLevel1() {
     .boost(180)
     .flat(350)
     .ramp(260, -110).airCrumbs(300, 110, 4).gap(260, 160)
-    .slope(500, 120).flat(250)
+    .slope(950, 220).flat(300)
     .sign('Land on your WHEELS. Flags are checkpoints!', 0)
     .crumbs(450, 3)
     .flat(450);
@@ -127,7 +132,7 @@ export function buildLevel1() {
     .boost(70)
     .flat(150)
     .ramp(320, -190).airCrumbs(420, 200, 5).gap(380, 320)
-    .slope(700, 220).flat(200)
+    .slope(1300, 360).flat(300)
     .crumbs(1120, 4, 70)
     .hills(2, 150, 560)
     .flat(300);
@@ -136,8 +141,9 @@ export function buildLevel1() {
   t.checkpoint().flat(250)
     .slope(500, -260)
     .ramp(240, -120).airCrumbs(460, 180, 5).gap(420, 480)
-    .slope(800, 260).boost(60).flat(150)
+    .slope(1400, 400).flat(150).boost(60).flat(150)
     .ramp(260, -110).airCrumbs(320, 120, 3).gap(300, 60)
+    .slope(800, 180).flat(250)
     .hills(1, 320, 1000)
     .flat(300);
 
@@ -147,7 +153,7 @@ export function buildLevel1() {
     .boost(10)
     .flat(120)
     .ramp(400, -260).airCrumbs(620, 280, 6).gap(560, 360)
-    .slope(800, 300).flat(200)
+    .slope(1500, 440).flat(300)
     .sign('The UFO is getting away!', 0)
     .crumbs(800, 3)
     .flat(800);
