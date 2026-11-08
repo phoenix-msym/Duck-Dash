@@ -2,6 +2,7 @@ import { makeTextures } from '../art.js';
 import { makeButton, keyboardMenu, sunsetBackdrop, FONT } from '../ui.js';
 import { audio } from '../audio.js';
 import { wallet } from '../wallet.js';
+import { menuScenery } from '../scenery.js';
 
 export class MenuScene extends Phaser.Scene {
   constructor() { super('Menu'); }
@@ -10,6 +11,8 @@ export class MenuScene extends Phaser.Scene {
     makeTextures(this);
     const { width: W, height: H } = this.scale;
     const ground = sunsetBackdrop(this);
+    // changing sky, ducks on the pond, fireflies, shooting stars
+    this.scenery = menuScenery(this, ground);
     audio.music('menu');
     audio.engineStop();
 
@@ -32,7 +35,7 @@ export class MenuScene extends Phaser.Scene {
     }).setOrigin(0.5);
     this.tweens.add({ targets: title, scale: 1.04, duration: 1200, yoyo: true, repeat: -1, ease: 'Sine.inOut' });
     this.add.text(W / 2, 228, 'Crumb wants the egg back.', {
-      fontFamily: FONT, fontSize: '26px', color: '#3b1d4a', fontStyle: 'italic',
+      fontFamily: FONT, fontSize: '26px', color: '#fff4dc', fontStyle: 'italic', stroke: '#3b1d4a', strokeThickness: 5,
     }).setOrigin(0.5);
 
     // Crumb on the bike, bouncing on the spot (wheels touching the grass)
@@ -56,5 +59,9 @@ export class MenuScene extends Phaser.Scene {
     this.add.text(W / 2, H - 28, 'W/S or mouse to choose  •  Enter to press', {
       fontFamily: FONT, fontSize: '18px', color: '#fff4dc',
     }).setOrigin(0.5);
+  }
+
+  update(time, delta) {
+    this.scenery.update(time, delta);
   }
 }

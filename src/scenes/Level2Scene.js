@@ -6,6 +6,7 @@ import { buildLevel2, LANES, LANES_PER_SIDE, SIDES, HOLE, PAD, CRACKED } from '.
 import { FONT, eraseSprites, unerase, levelCompletePanel, fmtTime, crumbHud } from '../ui.js';
 import { audio } from '../audio.js';
 import { addPauseButton } from './PauseScene.js';
+import { level2Scenery } from '../scenery.js';
 
 // ---- Runner tuning ----
 const SPEEDS = [10, 11, 11.5, 12, 12.5]; // rows per second in each section (basics, holes, asteroids, wind, boss)
@@ -109,6 +110,7 @@ export class Level2Scene extends Phaser.Scene {
       this.stars.push({ r: Phaser.Math.Between(30, 760), a: Math.random() * Math.PI * 2, size: Math.random() < 0.15 ? 2 : 1 });
     }
     this.starGfx = this.add.graphics().setDepth(2);
+    this.scenery = level2Scenery(this); // planets, space junk, asteroid belt, gas clouds, mothership, comets
 
     // the UFO, far down the tunnel
     this.ufo = this.add.image(this.cx, this.cy, 'ufo').setDepth(3);
@@ -399,6 +401,16 @@ export class Level2Scene extends Phaser.Scene {
       this.starGfx.fillRect(this.cx + Math.cos(a) * s.r, this.cy + Math.sin(a) * s.r, s.size, s.size);
     }
 
+    // --- background decorations (behind the tunnel) ---
+    const cps = this.track.checkpoints;
+    const secStart = cps[this.cpIndex], secEnd = cps[this.cpIndex + 1] ?? this.track.finishRow;
+    const nearWind = this.track.winds.find((w) => p.z > w.start - 30 && p.z < w.end);
+    this.scenery.update(time, dt, {
+      section: Math.min(this.cpIndex, 4),
+      sectionT: Phaser.Math.Clamp((p.z - secStart) / (secEnd - secStart), 0, 1),
+      roll: this.roll, windDir: nearWind ? nearWind.dir : 0, speed,
+    });
+
     // --- camera ---
     const pr = rot(wallPoint(p.u, Math.max(p.h, -3.5)));
     const camX = pr.x * 0.55;
@@ -481,7 +493,16 @@ export class Level2Scene extends Phaser.Scene {
             }
             g.fillStyle(mix(0xffe14d, col.bgBottom, f2), 1); g.fillCircle(fc.x, fc.y, sz * 0.6);
           }
-        } else if (type === CRACKED && fog < 0.8) {
+        }
+        // boss section: red warning lights flashing along the tunnel's corners
+        if (inBoss && r % 5 === 0 && l % LANES_PER_SIDE === 0 && fog < 0.9) {
+          const on = Math.floor(time / 250 + r / 5) % 2 === 0;
+          const lp = proj(a.x, a.y, (z0 + z1) / 2);
+          const lr = Math.max(2, (0.12 * FOCAL) / ((z0 + z1) / 2 - camZ));
+          g.fillStyle(0xff2030, on ? 0.35 : 0.1); g.fillCircle(lp.x, lp.y, lr * 2.4);
+          g.fillStyle(on ? 0xff5060 : 0x551018, 1); g.fillCircle(lp.x, lp.y, lr);
+        }
+        if (type === CRACKED && fog < 0.8) {
           g.lineStyle(2, 0x1a0d08, 0.8 * (1 - fog));
           g.lineBetween(p1.x, p1.y, (p1.x + p3.x) / 2 + 3, (p1.y + p3.y) / 2);
           g.lineBetween((p1.x + p3.x) / 2 + 3, (p1.y + p3.y) / 2, p3.x, p3.y);

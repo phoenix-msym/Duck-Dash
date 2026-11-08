@@ -6,6 +6,7 @@ import { buildLevel1, groundYAt } from '../level1Track.js';
 import { FONT, eraseSprites, unerase, levelCompletePanel, crumbHud } from '../ui.js';
 import { audio } from '../audio.js';
 import { addPauseButton } from './PauseScene.js';
+import { level1Scenery } from '../scenery.js';
 
 // ---- Bike tuning (change these to make the bike feel different) ----
 const MAX_WHEEL_SPIN = 1.3;   // top speed
@@ -54,6 +55,7 @@ export class Level1Scene extends Phaser.Scene {
     this.makeGround();
     this.makeFlagsAndSigns();
     this.makePickups();
+    this.scenery = level1Scenery(this, this.track); // pond, fence, hay, clouds, trees, birds, moon...
     this.makeBikeSprites();
     this.spawnBike(this.track.checkpoints[0]);
     this.makeHud();
@@ -138,6 +140,7 @@ export class Level1Scene extends Phaser.Scene {
     this.beam.fillStyle(0xb6ff3b, 0.18);
     this.beam.fillTriangle(this.ufo.x - 20, this.ufo.y + 25, this.ufo.x + 20, this.ufo.y + 25, this.bread.x + 40, this.bread.y + 20);
     this.beam.fillTriangle(this.ufo.x - 20, this.ufo.y + 25, this.bread.x - 40, this.bread.y + 20, this.bread.x + 40, this.bread.y + 20);
+    if (this.scenery) this.scenery.update(time, p);
   }
 
   // ------------------------------------------------------------------ ground
