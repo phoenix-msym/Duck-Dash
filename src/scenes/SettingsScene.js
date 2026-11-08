@@ -6,7 +6,7 @@ import { audio } from '../audio.js';
 
 const CONTROL_OPTIONS = [
   { value: 'keyboard', label: 'Keyboard' },
-  { value: 'gyro', label: 'HW-123 Gyro' },
+  { value: 'gyro', label: 'Wrist Sensor' },
 ];
 
 export class SettingsScene extends Phaser.Scene {
@@ -32,8 +32,8 @@ export class SettingsScene extends Phaser.Scene {
     this.sfxButton = makeButton(this, W / 2 + 145, 395, '', () => { audio.setSfxOn(settings.sfxOn === false); this.refresh(); }, { w: 260, h: 56, size: 24 });
     audio.music('menu');
 
-    this.note = this.add.text(W / 2, 470, '', {
-      fontFamily: FONT, fontSize: '20px', color: '#fff4dc', align: 'center', wordWrap: { width: 820 },
+    this.note = this.add.text(W / 2, 478, '', {
+      fontFamily: FONT, fontSize: '18px', color: '#fff4dc', align: 'center', wordWrap: { width: 860 },
     }).setOrigin(0.5);
     this.gyroStatus = this.add.text(W / 2, 545, '', {
       fontFamily: FONT, fontSize: '18px', color: '#b6ff3b', align: 'center', wordWrap: { width: 820 },
@@ -73,7 +73,7 @@ export class SettingsScene extends Phaser.Scene {
 
     const notes = {
       keyboard: 'W = go   S = brake   A / D = tilt back / forward',
-      gyro: 'Tilt the HW-123 right and left to lean. On the bike, tip it forward for gas and back to brake. In the tunnel, a quick double flick jumps and a third flick double jumps.\nPlug the Arduino in, press Connect, and pick its port. Close the Serial Monitor first.',
+      gyro: 'BIKE: fingers down = gas, fingers up = brake, tilt left / right = lean.\nRUN: you run by yourself. Tilt left / right to move (even in the air), double flick = jump, triple flick = double jump.\nPlug in the Arduino, press Connect and pick its port (close the Serial Monitor first).',
     };
     this.note.setText(notes[settings.controlMode]);
 

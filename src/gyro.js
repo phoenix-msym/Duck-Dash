@@ -1,6 +1,9 @@
-// HW-123 (MPU-6050) on an Arduino, read over USB by the browser.
+// The wrist sensor (MPU-6050 / HW-123 / GY-521 / MPU-9250) on an Arduino, read over USB by the browser.
 // Chrome and Edge only. The sketch in arduino/hw123_gyro prints:
 //   roll,pitch,flick     at 115200 baud, about 50 times a second.
+//   flick: 0 = nothing, 1 = double flick (jump), 3 = triple flick (double jump)
+// Bike level:  fingers down = gas, fingers up = brake, tilt left/right = lean.
+// Run level:   tilt left/right = move (works in the air too), double flick = jump, triple flick = double jump.
 // Those numbers land in externalInput, which both levels already read.
 
 import { settings, saveSettings } from './settings.js';
@@ -10,6 +13,9 @@ const BAUD = 115200;
 const DEAD = 12;   // degrees from neutral before the duck starts to move
 const FULL = 30;   // degrees for a full lean, gas, or brake
 const CALIB_SAMPLES = 25;
+// How strongly left/right tilt steers (1 = full). Lower = less sensitive.
+const LEAN_SENS_BIKE = 0.8;  // bike level: a bit less
+const LEAN_SENS_RUN = 0.6;   // run level: about 3/5
 const FLICK_GAP = 700;   // ms: flicks farther apart than this start a new sequence
 const JUMP_HOLD = 250;   // how long a double-flick jump stays available
 const DOUBLE_HOLD = 600; // how long the third flick can still double jump
@@ -45,7 +51,7 @@ export const gyro = {
   async connect(pick) {
     if (!this.supported) {
       this.status = 'error';
-      this.error = 'The HW-123 needs Chrome or Edge.';
+      this.error = 'The wrist sensor needs Chrome or Edge.';
       return;
     }
     if (this.status === 'connecting' || this.status === 'waiting' || this.status === 'ready') return;
@@ -111,7 +117,7 @@ export const gyro = {
     } catch (e) { /* unplugged */ }
     if (this.status !== 'off') {
       this.status = 'error';
-      this.error = 'Lost the HW-123. Plug it back in and press Connect.';
+      this.error = 'Lost the wrist sensor. Plug it back in and press Connect.';
       try { await this.port.close(); } catch (e) { /* already closed */ }
       this.port = null;
     }
@@ -135,7 +141,7 @@ export const gyro = {
     this.pitch = +parts[1];
     this.lastPacket = performance.now();
     const flick = +parts[2];
-    if (flick === 1 || flick === 2) this.noteFlick();
+    if (flick === 1 || flick === 3) this.noteFlick(flick);
 
     if (this.calib) {
       this.calib.push([this.roll, this.pitch]);
@@ -159,20 +165,18 @@ export const gyro = {
     return this.status === 'ready' && !this.calib;
   },
 
-  // Tunnel only. Two quick flicks jump; the third one double jumps. The bike ignores flicks.
-  noteFlick() {
+  // Tunnel only (the bike ignores flicks). The sketch counts the flicks for us:
+  //   flick = 1 -> a double flick: jump
+  //   flick = 3 -> a triple flick: double jump (a second jump while you're in the air)
+  noteFlick(kind) {
     if (currentLevel() !== 'Level2') return;
     const now = performance.now();
-    if (now - this.lastFlickAt > FLICK_GAP) this.flickCount = 0;
-    this.flickCount += 1;
-    this.lastFlickAt = now;
-    if (this.flickCount === 2) {
+    if (kind === 1) {
       this.jumpEdge = true;
       this.jumpUntil = now + JUMP_HOLD;
-    } else if (this.flickCount >= 3) {
+    } else if (kind === 3) {
       this.doubleEdge = true;
       this.doubleUntil = now + DOUBLE_HOLD;
-      this.flickCount = 0;
     }
   },
 
@@ -195,7 +199,7 @@ export const gyro = {
   },
 
   describe() {
-    if (!this.supported) return 'The HW-123 needs Chrome or Edge.';
+    if (!this.supported) return 'The wrist sensor needs Chrome or Edge.';
     if (this.status === 'error') return this.error;
     if (this.status === 'connecting') return 'Connecting...';
     if (this.status === 'waiting' || this.calib) {
@@ -221,7 +225,8 @@ export function syncGyro() {
   const stale = performance.now() - gyro.lastPacket > 500;
   let forward = 0, back = 0, left = 0, right = 0;
   if (!stale && gyro.ready()) {
-    const lean = tiltAmount(gyro.roll - gyro.roll0);
+    const sens = currentLevel() === 'Level2' ? LEAN_SENS_RUN : LEAN_SENS_BIKE;
+    const lean = tiltAmount(gyro.roll - gyro.roll0) * sens;
     if (lean > 0) right = lean;
     if (lean < 0) left = -lean;
     // Finger tilt is gas and brake on the bike. The tunnel ignores it.

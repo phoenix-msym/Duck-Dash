@@ -12,7 +12,8 @@ import { level1Scenery } from '../scenery.js';
 const MAX_WHEEL_SPIN = 1.3;   // top speed
 const WHEEL_ACCEL = 0.06;     // how fast it speeds up
 const HILL_PUSH = 0.0005;     // extra push along the ground while riding (stops it bogging down on hills)
-const DOWNFORCE = 0.0011;     // presses the bike onto the ground while riding, so it doesn't hop over bumps
+const DOWNFORCE = 0.0011;
+const FALL_DEPTH = 220;       // how far below a gap's edge you fall before "Splat!" (bigger = falls deeper)     // presses the bike onto the ground while riding, so it doesn't hop over bumps
 const AIR_DRAG = 0.0015;      // low air drag = Crumb keeps his momentum (the default is 0.01)
 const STAR_LIMITS = [48, 70]; // seconds: under the first = 3 stars, under the second = 2 stars (course is longer now)
 const BRAKE_SPIN = -0.25;     // S makes it slow down / roll back a bit
@@ -77,9 +78,6 @@ export class Level1Scene extends Phaser.Scene {
 
     this.input.keyboard.on('keydown-R', () => { if (!this.finished) this.respawn(); });
     addPauseButton(this, true); // P / Esc / the II button
-    if (settings.controlMode === 'gyro' && !gyro.ready()) {
-      this.time.delayedCall(600, () => this.showToast('Connect the HW-123 in Settings'));
-    }
   }
 
   // ------------------------------------------------------------------ background
@@ -234,6 +232,17 @@ export class Level1Scene extends Phaser.Scene {
     });
   }
 
+  // how far down the bike can fall at this x before it counts as falling into the gap
+  fallLimit(x) {
+    const pieces = this.track.pieces;
+    for (let i = 0; i < pieces.length - 1; i++) {
+      const end = pieces[i][pieces[i].length - 1], start = pieces[i + 1][0];
+      // over a gap (with a little extra on each side, for bikes sliding down the cliff walls)
+      if (x > end.x - 40 && x < start.x + 40) return Math.max(end.y, start.y) + FALL_DEPTH;
+    }
+    return this.deathY; // not over a gap: the old "bottom of the world" safety net
+  }
+
   // grab crumbs near the bike, and fire boost pads you drive over
   checkPickups() {
     const { frame, chassis, back, front } = this.bike;
@@ -362,6 +371,13 @@ export class Level1Scene extends Phaser.Scene {
       .setOrigin(0.5).setScrollFactor(0).setDepth(50).setAlpha(0);
   }
 
+  // the timer flashes green and pops when a flip takes time off it
+  flashTimeBonus() {
+    this.timeText.setColor('#7dff9a');
+    this.tweens.add({ targets: this.timeText, scale: { from: 1.35, to: 1 }, duration: 350, ease: 'Back.out' });
+    this.time.delayedCall(700, () => this.timeText.setColor('#fff4dc'));
+  }
+
   showToast(msg) {
     this.toast.setText(msg).setAlpha(1).setScale(0.6);
     this.tweens.killTweensOf(this.toast);
@@ -453,7 +469,13 @@ export class Level1Scene extends Phaser.Scene {
         if (flips >= 1) {
           this.time.delayedCall(200, () => {
             if (this.crashed) return;
-            this.showToast(flips >= 3 ? `${flips}x FLIP!!!` : flips === 2 ? 'DOUBLE FLIP!!' : 'FLIP!');
+            // FLIP BONUS: every front or back flip takes 0.5 seconds off your time
+            const bonus = flips * 0.5;
+            this.elapsed = Math.max(0, this.elapsed - bonus * 1000);
+            this.flipBonus = (this.flipBonus || 0) + bonus;
+            const name = flips >= 3 ? `${flips}x FLIP!!!` : flips === 2 ? 'DOUBLE FLIP!!' : 'FLIP!';
+            this.showToast(`${name}  BONUS -${bonus.toFixed(1)}s`);
+            this.flashTimeBonus();
             audio.sfx.checkpoint();
           });
         }
@@ -462,8 +484,9 @@ export class Level1Scene extends Phaser.Scene {
       this.airSpin = 0;
     }
 
-    // fell into a gap
-    if (frame.position.y > this.deathY && !this.crashed) {
+    // fell into a gap: you're out once you drop FALL_DEPTH pixels below the lower edge of that gap
+    // (not way down at the bottom of the world)
+    if (frame.position.y > this.fallLimit(frame.position.x) && !this.crashed) {
       this.crashed = true;
       this.showToast('Splat! Try again');
       audio.sfx.fall();

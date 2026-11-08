@@ -15,6 +15,7 @@ const JUMP_POWER = 10.2;
 const GRAVITY = 34.6;
 const FAST_FALL = 2.5;    // gravity multiplier while holding S in the air
 const COYOTE_TIME = 0.12; // seconds you can still jump after running off an edge
+const FALL_DEPTH = -0.9;  // how far below the floor you fall (in tiles) before "Lost in space!" (was -1.6)
 const BOOST = 1.6;        // lily pad speed multiplier
 const BOOST_TIME = 1.2;   // seconds a lily pad boost lasts
 const CRUMBLE_DELAY = 0.35;// seconds before a touched cracked tile falls
@@ -130,9 +131,6 @@ export class Level2Scene extends Phaser.Scene {
 
     this.input.keyboard.on('keydown-R', () => { if (!this.finished) this.spawn(); });
     addPauseButton(this, false); // P / Esc / the II button
-    if (settings.controlMode === 'gyro' && !gyro.ready()) {
-      this.time.delayedCall(600, () => this.showToast('Connect the HW-123 in Settings'));
-    }
   }
 
   spawn() {
@@ -246,7 +244,7 @@ export class Level2Scene extends Phaser.Scene {
           p.falling = true;
         }
       }
-      if (p.h < -1.6 && !p.dead) this.die('Lost in space!');
+      if (p.h < FALL_DEPTH && !p.dead) this.die('Lost in space!');
     }
 
     // checkpoints
