@@ -1,37 +1,38 @@
-// Duck Dash tilt control. HW-123 module (MPU-6050) on an Arduino.
-// The browser game reads this over USB. No extra bridge program.
+// Wrist controller for the Tunnel Runner and Moto games.
+// Works with an MPU-6050 (GY-521, HW-123) or an MPU-9250 (same accelerometer and gyro registers).
 //
-// Wiring:
-//   HW-123 VCC -> 5V
-//   HW-123 GND -> GND
-//   HW-123 SDA -> SDA (Mega pin 20, Uno pin A4)
-//   HW-123 SCL -> SCL (Mega pin 21, Uno pin A5)
-//   HW-123 AD0 -> GND (address 0x68). If AD0 is tied to 5V the address is 0x69; either works.
+// Wiring (Arduino Mega):
+//   VCC -> 5V for GY-521 / HW-123 (3.3V for a bare MPU-9250), GND -> GND
+//   SDA -> pin 20, SCL -> pin 21, AD0 -> GND (address 0x68)
 //
-// Wear it flat on the back of your hand, chip facing up, X arrow toward your fingers.
-// Hold still when the game says it is learning your neutral tilt.
+// Mounting: board flat on the back of your hand, component side up,
+// the X arrow pointing toward your fingers.
 //
-// About 50 lines a second at 115200 baud:  roll,pitch,flick
-//   roll  > 0 : right side of the hand tilts down   -> lean / steer right
-//   pitch > 0 : fingers point down                  -> gas on the bike (tunnel ignores this)
-//   pitch < 0 : fingers point up                    -> brake on the bike (tunnel ignores this)
-//   flick = 1 : second flick of a pair              -> tunnel jump
-//   flick = 2 : a single flick                      -> third one in a row double jumps in the tunnel
-// Startup lines are text: SENSOR 0x68, WHO_AM_I ..., READY, or NO_SENSOR: ...
+// Output, about 50 lines per second at 115200 baud:   roll,pitch,flick
+//   roll  > 0 : right side of the hand tilts down
+//   pitch > 0 : fingers point down
+//   flick = 1 : a double wrist flick was detected (sent once)  -> jump
+//   flick = 3 : a triple wrist flick was detected (sent once)  -> double jump
+//   (a single flick sends nothing)
+
 
 #include <Wire.h>
+
 
 uint8_t ADDR = 0x68;                       // found automatically (0x68 or 0x69)
 const float ALPHA = 0.96;                  // gyro vs accelerometer blend
 const float FLICK_DPS = 350.0;             // rotation speed that counts as a flick
 const unsigned long DOUBLE_WINDOW = 700;   // max time between the two flicks (ms)
 const unsigned long REFRACT = 120;         // minimum time between flicks (ms)
-const unsigned long HOLD_MS = 450;         // freeze tilt output after a flick (ms)
+const unsigned long HOLD_MS = 150;         // freeze tilt output after a flick (ms)  [CHANGED: was 450]
+
 
 float gxo = 0, gyo = 0, gzo = 0;
 float roll = 0, pitch = 0, outRoll = 0, outPitch = 0;
 unsigned long lastMicros = 0, lastSend = 0, lastFlick = 0, holdUntil = 0;
-bool armed = true, waiting = false;
+bool armed = true;
+int flickCount = 0;                        // flicks in the current burst  [CHANGED: replaces "waiting"]
+
 
 void writeReg(uint8_t reg, uint8_t val) {
   Wire.beginTransmission(ADDR);
@@ -40,6 +41,7 @@ void writeReg(uint8_t reg, uint8_t val) {
   Wire.endTransmission();
 }
 
+
 uint8_t readReg(uint8_t reg) {
   Wire.beginTransmission(ADDR);
   Wire.write(reg);
@@ -47,6 +49,7 @@ uint8_t readReg(uint8_t reg) {
   Wire.requestFrom(ADDR, (uint8_t)1);
   return Wire.available() ? Wire.read() : 0;
 }
+
 
 bool readIMU(float &ax, float &ay, float &az, float &gx, float &gy, float &gz) {
   Wire.beginTransmission(ADDR);
@@ -64,24 +67,27 @@ bool readIMU(float &ax, float &ay, float &az, float &gx, float &gy, float &gz) {
   return true;
 }
 
+
 void setup() {
   Serial.begin(115200);
+  Serial.println("BOOT");            // [ADDED] proves the board is running, printed before touching the sensor
   Wire.begin();
+  Wire.setWireTimeout(3000, true);   // [ADDED] if the sensor wires are wrong, give up instead of freezing forever
   Wire.setClock(100000);   // slow and safe for jumper wires
   delay(10);
 
+
+  // Find the sensor at 0x68 or 0x69.
   uint8_t found = 0;
   const uint8_t tryAddr[2] = {0x68, 0x69};
   for (int i = 0; i < 2 && !found; i++) {
     Wire.beginTransmission(tryAddr[i]);
     if (Wire.endTransmission() == 0) found = tryAddr[i];
   }
-  if (!found) {
-    Serial.println("NO_SENSOR: nothing answers at 0x68 or 0x69, check wiring");
-    while (true) {}
-  }
+  if (!found) { Serial.println("NO_SENSOR: nothing answers at 0x68 or 0x69, check wiring"); while (true) {} }
   ADDR = found;
   Serial.print("SENSOR 0x"); Serial.println(ADDR, HEX);
+
 
   writeReg(0x6B, 0x00);   // wake up
   delay(100);
@@ -91,18 +97,18 @@ void setup() {
   writeReg(0x1C, 0x00);   // accelerometer range +-2 g
   delay(100);
 
+
+  // Measure the gyro offsets while the hand rests still.
   float sx = 0, sy = 0, sz = 0;
   int n = 0, tries = 0;
   float ax, ay, az, gx, gy, gz;
   while (n < 200) {
     if (readIMU(ax, ay, az, gx, gy, gz)) { sx += gx; sy += gy; sz += gz; n++; }
-    if (++tries > 2000) {
-      Serial.println("NO_SENSOR: found the chip but reads fail, check wires or power");
-      while (true) {}
-    }
+    if (++tries > 2000) { Serial.println("NO_SENSOR: found the chip but reads fail, check wires or power"); while (true) {} }
     delay(5);
   }
   gxo = sx / n;  gyo = sy / n;  gzo = sz / n;
+
 
   roll  = atan2(ay, az) * RAD_TO_DEG;
   pitch = atan2(-ax, sqrt(ay * ay + az * az)) * RAD_TO_DEG;
@@ -111,39 +117,49 @@ void setup() {
   Serial.println("READY");
 }
 
+
 void loop() {
   unsigned long nowUs = micros();
   if (nowUs - lastMicros < 10000) return;            // about 100 Hz sensor loop
   float dt = (nowUs - lastMicros) / 1000000.0;
   lastMicros = nowUs;
 
+
   float ax, ay, az, gx, gy, gz;
   if (!readIMU(ax, ay, az, gx, gy, gz)) return;
   gx -= gxo;  gy -= gyo;  gz -= gzo;
+
 
   float accRoll  = atan2(ay, az) * RAD_TO_DEG;
   float accPitch = atan2(-ax, sqrt(ay * ay + az * az)) * RAD_TO_DEG;
   roll  = ALPHA * (roll  + gx * dt) + (1.0 - ALPHA) * accRoll;
   pitch = ALPHA * (pitch + gy * dt) + (1.0 - ALPHA) * accPitch;
 
+
   unsigned long now = millis();
   float rate = sqrt(gx * gx + gy * gy + gz * gz);
   int flick = 0;
 
+
   if (rate > FLICK_DPS) {
-    holdUntil = now + HOLD_MS;
+    holdUntil = now + HOLD_MS;                       // ignore tilt during the flick
     if (armed && now - lastFlick > REFRACT) {
-      if (waiting && now - lastFlick <= DOUBLE_WINDOW) { flick = 1; waiting = false; }
-      else { waiting = true; flick = 2; }
+      // [CHANGED] count the flicks in a burst: 2nd flick = jump, 3rd flick = double jump
+      if (now - lastFlick > DOUBLE_WINDOW) flickCount = 0;
+      flickCount++;
+      if (flickCount == 2) flick = 1;
+      else if (flickCount == 3) { flick = 3; flickCount = 0; }
       lastFlick = now;
       armed = false;
     }
   } else if (rate < FLICK_DPS * 0.4) {
     armed = true;
   }
-  if (waiting && now - lastFlick > DOUBLE_WINDOW) waiting = false;
+  if (flickCount > 0 && now - lastFlick > DOUBLE_WINDOW) flickCount = 0;   // [CHANGED] burst timed out
+
 
   if (now > holdUntil) { outRoll = roll; outPitch = pitch; }
+
 
   if (flick || now - lastSend >= 20) {
     lastSend = now;
