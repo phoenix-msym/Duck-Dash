@@ -3,7 +3,7 @@ import { createControls } from '../controls.js';
 import { settings } from '../settings.js';
 import { gyro } from '../gyro.js';
 import { buildLevel1, buildLevel1Demo, groundYAt } from '../level1Track.js';
-import { FONT, eraseSprites, unerase, levelCompletePanel, crumbHud, levelTitle, checkpointBarClicks } from '../ui.js';
+import { FONT, eraseSprites, unerase, levelCompletePanel, crumbHud, levelTitle, checkpointBarClicks, savedCheckpoint, saveCheckpoint } from '../ui.js';
 import { STORY, storyIndex, startStoryLevel } from '../story.js';
 import { audio } from '../audio.js';
 import { addPauseButton } from './PauseScene.js';
@@ -395,13 +395,22 @@ export class Level1Scene extends Phaser.Scene {
       .setOrigin(1, 0).setScrollFactor(0).setDepth(50);
     // progress bar: Crumb vs the finish
     this.progress = this.add.graphics().setScrollFactor(0).setDepth(50);
-    // click a checkpoint dot on the bar to go back to it (any checkpoint you've reached so far)
-    this.reachedCp = 0;
+    // click a checkpoint dot on the bar to jump to it: any checkpoint you've EVER reached in this level
+    // (remembered between runs). Jumping ahead of where you've got to in THIS run makes it a practice run.
+    this.levelId = this.mode === 'demo' ? 'demo1' : `story${this.stage}`;
+    this.reachedCp = savedCheckpoint(this.levelId); // furthest ever
+    this.runCp = 0;                                  // furthest reached in this run
+    this.practice = false;
     const start = this.track.checkpoints[0].x, end = this.track.finishX - 400;
     this.barDots = this.track.checkpoints.map((cp) => W / 2 - 200 + 400 * (cp.x - start) / (end - start));
     this.barClicks = checkpointBarClicks(this, this.barDots, 30,
       (i) => !this.finished && i <= this.reachedCp,
-      (i) => { this.cpIndex = i; this.respawn(); this.showToast(`Back to checkpoint ${i}`); });
+      (i) => {
+        if (i > this.runCp) this.practice = true; // skipped ahead: this run's time won't count
+        const forward = i > this.cpIndex;
+        this.cpIndex = i; this.respawn();
+        this.showToast(`${forward ? 'Skip to' : 'Back to'} checkpoint ${i}`);
+      });
     this.toast = this.add.text(W / 2, 140, '', { ...style, fontSize: '40px', fontStyle: 'bold' })
       .setOrigin(0.5).setScrollFactor(0).setDepth(50).setAlpha(0);
   }
@@ -599,6 +608,8 @@ export class Level1Scene extends Phaser.Scene {
     if (next && frame.position.x > next.x && !this.crashed) {
       this.cpIndex++;
       this.reachedCp = Math.max(this.reachedCp, this.cpIndex);
+      this.runCp = Math.max(this.runCp, this.cpIndex);
+      saveCheckpoint(this.levelId, this.cpIndex);
       this.flags[this.cpIndex].setTexture('flagOn');
       this.showToast(`Checkpoint ${this.cpIndex}!`);
       audio.sfx.checkpoint();
@@ -626,7 +637,7 @@ export class Level1Scene extends Phaser.Scene {
     const lines = ['The UFO is speeding off over the hills!', 'It\'s getting dark... the UFO is climbing!', 'The UFO is heading for space... Crumb won\'t give up!'];
     levelCompletePanel(this, {
       title: demo ? 'Demo: bike done!' : `Level ${n + 1} complete!`, secs: this.elapsed / 1000,
-      limits: demo ? [24, 35] : STAR_LIMITS[this.stage - 1], levelKey: demo ? 'demo1' : `story${n + 1}`,
+      limits: demo ? [24, 35] : STAR_LIMITS[this.stage - 1], levelKey: this.practice ? null : demo ? 'demo1' : `story${n + 1}`,
       line: demo ? 'Next up: the space tunnel!' : lines[this.stage - 1], fixed: true,
       crumbs: { got: this.crumbs.got, total: this.crumbs.total },
       // story: the next level (the middle cutscene plays before the first space level).

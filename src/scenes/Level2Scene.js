@@ -3,7 +3,7 @@ import { createControls } from '../controls.js';
 import { settings } from '../settings.js';
 import { gyro } from '../gyro.js';
 import { buildLevel2, buildLevel2Demo, makeEndlessTrack, LANES, LANES_PER_SIDE, SIDES, HOLE, PAD, CRACKED } from '../level2Track.js';
-import { FONT, eraseSprites, unerase, levelCompletePanel, fmtTime, crumbHud, makeButton, keyboardMenu, levelTitle, checkpointBarClicks } from '../ui.js';
+import { FONT, eraseSprites, unerase, levelCompletePanel, fmtTime, crumbHud, makeButton, keyboardMenu, levelTitle, checkpointBarClicks, savedCheckpoint, saveCheckpoint } from '../ui.js';
 import { STORY, storyIndex, startStoryLevel } from '../story.js';
 import { wallet } from '../wallet.js';
 import { audio } from '../audio.js';
@@ -162,7 +162,7 @@ export class Level2Scene extends Phaser.Scene {
       this.stars.push({ r: Phaser.Math.Between(30, 760), a: Math.random() * Math.PI * 2, size: Math.random() < 0.15 ? 2 : 1 });
     }
     this.starGfx = this.add.graphics().setDepth(2);
-    this.scenery = level2Scenery(this); // planets, space junk, asteroid belt, gas clouds, mothership, comets
+    this.scenery = level2Scenery(this); // planets, space junk, asteroid belt, gas clouds, comets
 
     // the UFO, far down the tunnel
     this.ufo = this.add.image(this.cx, this.cy, 'ufo').setDepth(3);
@@ -374,6 +374,8 @@ export class Level2Scene extends Phaser.Scene {
     if (next !== undefined && p.z > next) {
       this.cpIndex++;
       this.reachedCp = Math.max(this.reachedCp || 0, this.cpIndex);
+      this.runCp = Math.max(this.runCp || 0, this.cpIndex);
+      if (!this.endless) saveCheckpoint(this.levelId, this.cpIndex);
       const bossNow = this.sectionStyle() === 4 && this.sectionStyle(this.cpIndex - 1) !== 4;
       this.showToast(bossNow ? 'BOSS FIGHT!' : `Checkpoint ${this.cpIndex}!`);
       audio.sfx.checkpoint();
@@ -974,14 +976,23 @@ export class Level2Scene extends Phaser.Scene {
     this.timeText = this.add.text(20, 46, '', style).setDepth(50);
     this.add.text(W - 20, 16, `${this.endless ? 'R = restart' : 'R = back to checkpoint'}   P / Esc = pause`, { ...style, fontSize: '18px' }).setOrigin(1, 0).setDepth(50);
     this.progress = this.add.graphics().setDepth(50);
-    // click a checkpoint dot on the bar to go back to it (any checkpoint you've reached so far)
-    this.reachedCp = 0;
+    // click a checkpoint dot on the bar to jump to it: any checkpoint you've EVER reached in this level
+    // (remembered between runs). Jumping ahead of where you've got to in THIS run makes it a practice run.
+    this.levelId = this.mode === 'demo' ? 'demo2' : `story${3 + this.stage}`;
+    this.reachedCp = this.endless ? 0 : savedCheckpoint(this.levelId); // furthest ever
+    this.runCp = 0;                                                      // furthest reached in this run
+    this.practice = false;
     if (!this.endless) {
       const end = this.track.finishRow;
       this.barDots = this.track.checkpoints.map((cp) => W / 2 - 200 + (400 * cp) / end);
       this.barClicks = checkpointBarClicks(this, this.barDots, 30,
         (i) => !this.finished && i <= this.reachedCp,
-        (i) => { this.cpIndex = i; this.spawn(); this.showToast(`Back to checkpoint ${i}`); });
+        (i) => {
+          if (i > this.runCp) this.practice = true; // skipped ahead: this run's time won't count
+          const forward = i > this.cpIndex;
+          this.cpIndex = i; this.spawn();
+          this.showToast(`${forward ? 'Skip to' : 'Back to'} checkpoint ${i}`);
+        });
     }
     this.hintText = this.add.text(W / 2, H - 70, '', {
       ...style, fontSize: '30px', fontStyle: 'bold', align: 'center', wordWrap: { width: 1000 },
@@ -1068,7 +1079,7 @@ export class Level2Scene extends Phaser.Scene {
     const lines = ['The UFO speeds deeper into the tunnel...', 'So close! The UFO is right ahead!', 'Crumb caught the UFO... but who is flying it?'];
     levelCompletePanel(this, {
       title: demo ? 'Demo complete!' : `Level ${n + 1} complete!`, secs: this.elapsed / 1000,
-      limits: demo ? [82, 100] : STAR_LIMITS[this.stage - 1], levelKey: demo ? 'demo2' : `story${n + 1}`,
+      limits: demo ? [82, 100] : STAR_LIMITS[this.stage - 1], levelKey: this.practice ? null : demo ? 'demo2' : `story${n + 1}`,
       line: demo ? lines[2] : lines[this.stage - 1],
       crumbs: { got: this.crumbs.got, total: this.crumbs.total },
       onDone: () => (demo

@@ -81,6 +81,15 @@ export function levelTitle(scene, number, name) {
 // reached to go back to it. xs = the x of each dot on screen, y = the bar's y.
 // canGo(i) says if dot i can be clicked right now, go(i) sends Crumb there.
 // Returns { hovered } so the HUD can draw a ring around the dot under the mouse.
+// The furthest checkpoint you've ever reached in a level is remembered (even after restarting it or
+// reloading the game), so you can always click straight back to it.
+export function savedCheckpoint(levelId) {
+  try { return +(localStorage.getItem('duckdash-cp-' + levelId) || 0); } catch (e) { return 0; }
+}
+export function saveCheckpoint(levelId, i) {
+  try { if (i > savedCheckpoint(levelId)) localStorage.setItem('duckdash-cp-' + levelId, String(i)); } catch (e) { /* ignore */ }
+}
+
 export function checkpointBarClicks(scene, xs, y, canGo, go) {
   const state = { hovered: -1 };
   xs.forEach((x, i) => {
@@ -184,7 +193,8 @@ export const fmtTime = (secs) => `${Math.floor(secs / 60)}:${(secs % 60).toFixed
 export function levelCompletePanel(scene, { title, secs, limits, levelKey, line, onDone, fixed = false, wait = 4200, crumbs = null }) {
   const { width: W, height: H } = scene.scale;
   const stars = starsForTime(secs, limits);
-  const { best, newRecord } = saveBest(levelKey, stars, secs);
+  // (no levelKey = a practice run where you skipped ahead with the checkpoint bar: the time isn't saved)
+  const { best, newRecord } = levelKey ? saveBest(levelKey, stars, secs) : { best: null, newRecord: false };
   const items = [];
   const add = (o) => { if (fixed) o.setScrollFactor(0); items.push(o); return o; };
 
@@ -206,7 +216,7 @@ export function levelCompletePanel(scene, { title, secs, limits, levelKey, line,
   }
   const crumbLine = crumbs ? `\nBread crumbs: ${crumbs.got} / ${crumbs.total}   ·   in your bag: ${wallet.crumbs}` : '';
   add(scene.add.text(W / 2, H / 2 + 55,
-    `Time: ${fmtTime(secs)}${newRecord ? '   NEW BEST!' : ''}\n3 stars: under ${fmtTime(limits[0])}   ·   best: ${fmtTime(best.secs)}${crumbLine}`,
+    `Time: ${fmtTime(secs)}${newRecord ? '   NEW BEST!' : ''}\n${best ? `3 stars: under ${fmtTime(limits[0])}   ·   best: ${fmtTime(best.secs)}` : 'Practice run (you skipped ahead), so this time isn\'t saved'}${crumbLine}`,
     { ...style, fontSize: '22px', lineSpacing: 4 }).setOrigin(0.5).setDepth(61));
   add(scene.add.text(W / 2, H / 2 + 135, line, { ...style, fontSize: '24px', color: '#ffd23f', fontStyle: 'italic' }).setOrigin(0.5).setDepth(61));
   const hint = add(scene.add.text(W / 2, H / 2 + 180, 'Space = continue', { ...style, fontSize: '18px' }).setOrigin(0.5).setDepth(61).setAlpha(0.7));

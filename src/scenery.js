@@ -1,6 +1,6 @@
 // Background decorations: everything that's just there to look nice.
 //   level1Scenery(scene, track) -> pond, fence, signs, hay bales, clouds, trees, birds, moon, satellites, UFO trail
-//   level2Scenery(scene)        -> planets, space junk, asteroid belt, gas clouds, mothership shadow, comets
+//   level2Scenery(scene)        -> planets, space junk, asteroid belt, gas clouds, comets
 //   menuScenery(scene, ground)  -> swimming ducks, fireflies, shooting stars and a sky that slowly changes
 // Each one returns an object with update(...) that the scene calls every frame.
 
@@ -409,11 +409,9 @@ export function level2Scenery(scene) {
   const { width: W, height: H } = scene.scale;
   const cx = W / 2, cy = H / 2 - 40;
 
-  // one big planet per section (the boss section gets the mothership instead)
+  // one big planet per section (the boss section has none: nothing distracting while you dodge)
   const planetKeys = ['planetRinged', 'planetRed', 'planetMoon', 'planetIce', null];
   const planets = planetKeys.map((key, i) => key && scene.add.image(0, 0, key).setDepth(1.5).setAlpha(0).setData('a', 0.9 + i * 1.3));
-  // the mothership's huge shadow slides over the tunnel during the boss fight (drawn on top of the tiles, see-through)
-  const mothership = scene.add.image(cx, 120, 'mothership').setDepth(4.5).setAlpha(0).setScale(2.2);
 
   // floating space junk drifting past
   const junk = [];
@@ -451,9 +449,6 @@ export function level2Scenery(scene) {
         const r = 260 + t * 160;
         pl.setPosition(cx + Math.cos(a) * r, cy + Math.sin(a) * r).setScale(0.7 + t * 0.8).setAlpha(shown[i]).setRotation(roll * 0.3);
       });
-      // the boss's huge mothership looming above
-      mothership.setAlpha(shown[4] * 0.32)
-        .setPosition(cx + Math.sin(time / 4000) * 260, 140 + Math.sin(time / 1700) * 20).setRotation(roll * 0.05);
 
       // space junk floats past (like the stars, flying outwards)
       for (const j of junk) {
